@@ -2,6 +2,9 @@
 # PostgreSQL). db/docker-init.sh runs db/bootstrap.sql once, on first start of the volume.
 #   cp .env.example .env   # then fill in the passwords
 #   docker compose up -d
+# A fixed name: otherwise Docker names the volume after the folder, and renaming the folder
+# starts an empty database.
+name: trillopos-local
 services:
   postgres:
     image: postgres:17

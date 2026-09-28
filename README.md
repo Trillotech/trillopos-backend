@@ -1,7 +1,7 @@
 # trillopos-backend
 
 Multi-tenant POS and inventory API for TrilloPOS. Spring Boot 4.1 · Java 25 · Hibernate ORM 7.4 ·
-PostgreSQL · Flyway. Spec: `../docs/domain-model.md`. Working memory: `../TrilloPOS-Vault/`.
+PostgreSQL · Flyway. Spec: `../docs/domain-model.md`. Working memory: `../trillopos-vaultMemo/`.
 
 Build steps 1–2 are in place: accounts, organizations, locations (`STORE` · `WAREHOUSE`),
 memberships and invitations, token auth, catalog CRUD (step 1); the append-only stock ledger,
