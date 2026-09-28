@@ -2,10 +2,10 @@
 
 ## Read the vault before exploring the code
 
-Working memory for this project lives in the **`TrilloPOS-Vault`** repo, checked out beside this one:
+Working memory for this project lives in the **`trillopos-vaultMemo`** repo, checked out beside this one:
 
 ```
-../TrilloPOS-Vault/now.md
+../trillopos-vaultMemo/now.md
 ```
 
 **Read `now.md` first** — current HEADs, what just landed, open items, traps. Do not read
