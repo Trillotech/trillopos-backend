@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -102,8 +103,8 @@ class ProductController {
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @PreAuthorize("hasAnyRole('OWNER', 'STOCK_MANAGER')")
-    void archive(@PathVariable UUID id) {
-        service.archive(id);
+    void archive(@PathVariable UUID id, @RequestParam(defaultValue = "false") boolean writeOffStock) {
+        service.archive(id, writeOffStock);
     }
 
     @PostMapping("/{id}/barcodes")
