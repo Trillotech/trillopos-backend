@@ -2,7 +2,6 @@ package app.trillopos.catalog;
 
 import java.time.Clock;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
@@ -65,11 +64,14 @@ class SizeChartController {
     }
 
     private final SizeChartRepository charts;
+    private final SizeChartService copies;
     private final CategoryRepository categories;
     private final Clock clock;
 
-    SizeChartController(SizeChartRepository charts, CategoryRepository categories, Clock clock) {
+    SizeChartController(SizeChartRepository charts, SizeChartService copies, CategoryRepository categories,
+            Clock clock) {
         this.charts = charts;
+        this.copies = copies;
         this.categories = categories;
         this.clock = clock;
     }
@@ -89,16 +91,9 @@ class SizeChartController {
     @Transactional
     ResponseEntity<SizeChartView> create(@Valid @RequestBody SizeChartCreate request) {
         if (request.templateKey() != null) {
-            Template template = SizeChartLibrary.find(request.templateKey())
-                    .orElseThrow(() -> ApiException.badRequest("size_chart_not_found", "no such chart in the library"));
-            Optional<SizeChart> existing = charts.findByTemplateKeyAndArchivedAtIsNull(template.key());
-            if (existing.isPresent()) {
-                return ResponseEntity.ok(SizeChartView.of(existing.get()));
-            }
-            String name = blankToNull(request.name());
-            SizeChart copy = charts.save(new SizeChart(name == null ? template.name() : name, template.kind(),
-                    template.key(), SizeChart.check(template.systems(), template.rows())));
-            return ResponseEntity.status(HttpStatus.CREATED).body(SizeChartView.of(copy));
+            SizeChartService.Copy copy = copies.copy(request.templateKey(), request.name());
+            return ResponseEntity.status(copy.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                    .body(SizeChartView.of(copy.chart()));
         }
         String name = blankToNull(request.name());
         if (name == null) {
