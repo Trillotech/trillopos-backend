@@ -25,23 +25,27 @@ import app.trillopos.shared.web.ApiException;
 @RequestMapping("/categories")
 class CategoryController {
 
-    record CategoryView(UUID id, String name, UUID parentId) {
+    record CategoryView(UUID id, String name, UUID parentId, UUID sizeChartId) {
 
         static CategoryView of(Category c) {
-            return new CategoryView(c.getId(), c.getName(), c.getParentId());
+            return new CategoryView(c.getId(), c.getName(), c.getParentId(), c.getSizeChartId());
         }
     }
 
-    record CategoryCreate(@NotBlank @Size(max = 120) String name, UUID parentId) {
+    /** {@code sizeChartId}: the size chart Add Product opens with for this category. */
+    record CategoryCreate(@NotBlank @Size(max = 120) String name, UUID parentId, UUID sizeChartId) {
     }
 
-    record CategoryUpdate(@Size(min = 1, max = 120) String name) {
+    /** Every field optional; {@code clearSizeChart} removes the category's size chart. */
+    record CategoryUpdate(@Size(min = 1, max = 120) String name, UUID sizeChartId, Boolean clearSizeChart) {
     }
 
     private final CategoryRepository categories;
+    private final SizeChartRepository sizeCharts;
 
-    CategoryController(CategoryRepository categories) {
+    CategoryController(CategoryRepository categories, SizeChartRepository sizeCharts) {
         this.categories = categories;
+        this.sizeCharts = sizeCharts;
     }
 
     @GetMapping
@@ -61,7 +65,9 @@ class CategoryController {
                 throw ApiException.badRequest("category_too_deep", "categories are kept to two levels");
             }
         }
-        return CategoryView.of(categories.save(new Category(request.name(), request.parentId())));
+        Category category = new Category(request.name(), request.parentId());
+        category.setSizeChartId(liveChart(request.sizeChartId()));
+        return CategoryView.of(categories.save(category));
     }
 
     @PatchMapping("/{id}")
@@ -73,6 +79,20 @@ class CategoryController {
         if (request.name() != null) {
             category.setName(request.name());
         }
+        if (Boolean.TRUE.equals(request.clearSizeChart())) {
+            category.setSizeChartId(null);
+        } else if (request.sizeChartId() != null) {
+            category.setSizeChartId(liveChart(request.sizeChartId()));
+        }
         return CategoryView.of(category);
+    }
+
+    private UUID liveChart(UUID sizeChartId) {
+        if (sizeChartId == null) {
+            return null;
+        }
+        return sizeCharts.findById(sizeChartId).filter(chart -> !chart.isArchived())
+                .orElseThrow(() -> ApiException.badRequest("size_chart_not_found", "no such size chart"))
+                .getId();
     }
 }
