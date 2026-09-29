@@ -4,7 +4,6 @@ import static app.trillopos.support.Api.json;
 import static app.trillopos.support.Api.read;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -27,8 +26,9 @@ import app.trillopos.support.Api.Owner;
 import app.trillopos.support.IntegrationTest;
 
 /**
- * Size charts (2026-09-29): a shoe shop labels sizes in EU, UK, US men, US women, kids or cm; a
- * clothes shop in letters or numbers. Each size of a model is still its own product (spec §4).
+ * Size charts (2026-09-29): one table per kind of goods, every sizing system side by side, so a
+ * shop sees that EU 42 is UK 8, US men's 9, US women's 10.5 and 26.5 cm. Each size of a model is
+ * still its own product (spec §4).
  */
 class SizeChartTest extends IntegrationTest {
 
@@ -43,23 +43,25 @@ class SizeChartTest extends IntegrationTest {
     }
 
     @Test
-    void theLibraryCoversEverySizingSystemWithHalfSizes() throws Exception {
+    void theLibraryLinesUpEverySizingSystem() throws Exception {
         Owner owner = api.signup();
-        api.call(get("/size-charts/library"), owner.token())
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[*].key").value(hasItems("shoes_eu", "shoes_uk", "shoes_us_men",
-                        "shoes_us_women", "shoes_cm", "kids_shoes_eu", "kids_shoes_uk", "kids_shoes_us",
-                        "clothes_letter", "clothes_eu", "clothes_uk_women", "clothes_us_women", "trousers_waist",
-                        "kids_clothes_age", "one_size")))
-                .andExpect(jsonPath("$[?(@.key == 'shoes_eu')].labels[0]").value("35"))
-                .andExpect(jsonPath("$[?(@.key == 'shoes_eu')].labels[*]").value(hasItems("35.5", "42", "42.5", "48")))
-                .andExpect(jsonPath("$[?(@.key == 'shoes_us_men')].shortName").value("US M"))
-                .andExpect(jsonPath("$[?(@.key == 'kids_shoes_us')].labels[*]").value(hasItems("10.5C", "3.5Y")))
-                .andExpect(jsonPath("$[?(@.key == 'clothes_letter')].labels[*]").value(hasItems("S", "M", "XL")));
+        String body = body(api.call(get("/size-charts/library"), owner.token()).andExpect(status().isOk()));
 
-        // every chart in the library is a valid chart: no blank, repeated or too-long size
+        List<String> keys = JsonPath.read(body, "$[*].key");
+        assertThat(keys).containsExactly("shoes", "sneakers", "kids_shoes", "womens_clothes", "mens_clothes",
+                "kids_clothes", "trousers", "shirts", "bras", "one_size");
+        assertThat(systemsOf(body, "shoes")).containsExactly("EU", "UK", "US M", "US W", "CM");
+        assertThat(rowsOf(body, "shoes")).hasSize(14).contains(List.of("42", "8", "9", "10.5", "26.5"));
+        assertThat(systemsOf(body, "sneakers")).containsExactly("US M", "US W", "UK", "EU", "CM");
+        assertThat(rowsOf(body, "sneakers")).contains(List.of("9", "10.5", "8", "42.5", "27"), List.of("15", "", "14", "49.5", "33"));
+        assertThat(rowsOf(body, "kids_shoes")).contains(List.of("32", "13", "1Y", "20"), List.of("33", "1", "1.5Y", "20.5"));
+        assertThat(rowsOf(body, "womens_clothes")).contains(List.of("M", "38", "10", "6"));
+        assertThat(rowsOf(body, "bras")).hasSize(30).contains(List.of("34B", "75B"), List.of("36DD", "80E"));
+
+        // every library table is a valid table as it stands
         for (SizeChartLibrary.Template template : SizeChartLibrary.all()) {
-            assertThat(SizeChart.normalizeLabels(template.labels())).as(template.key()).isEqualTo(template.labels());
+            SizeChart.Sizes checked = SizeChart.check(template.systems(), template.rows());
+            assertThat(checked.rows()).as(template.key()).isEqualTo(template.rows());
         }
     }
 
@@ -67,14 +69,15 @@ class SizeChartTest extends IntegrationTest {
     void takingALibraryChartTwiceGivesTheShopTheSameCopy() throws Exception {
         Owner owner = api.signup();
         String copy = read(api.call(json(post("/size-charts"), """
-                {"templateKey":"shoes_eu","name":"ဖိနပ် · EU"}"""), owner.token())
+                {"templateKey":"shoes","name":"ဖိနပ် · EU ဆိုဒ်"}"""), owner.token())
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.name").value("ဖိနပ် · EU"))
-                .andExpect(jsonPath("$.shortName").value("EU"))
+                .andExpect(jsonPath("$.name").value("ဖိနပ် · EU ဆိုဒ်"))
+                .andExpect(jsonPath("$.systems[0]").value("EU"))
+                .andExpect(jsonPath("$.rows", hasSize(14)))
                 .andExpect(jsonPath("$.kind").value("FOOTWEAR"))
-                .andExpect(jsonPath("$.templateKey").value("shoes_eu")), "$.id");
+                .andExpect(jsonPath("$.templateKey").value("shoes")), "$.id");
 
-        api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes_eu\"}"), owner.token())
+        api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes\"}"), owner.token())
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(copy));
         api.call(get("/size-charts"), owner.token())
@@ -85,97 +88,108 @@ class SizeChartTest extends IntegrationTest {
 
         // deleted, it no longer counts: the library gives a fresh copy
         api.call(delete("/size-charts/" + copy), owner.token()).andExpect(status().isNoContent());
-        String fresh = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes_eu\"}"), owner.token())
+        String fresh = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes\"}"), owner.token())
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.name").value("Shoes · EU")), "$.id");
+                .andExpect(jsonPath("$.name").value("Shoes · EU sizes")), "$.id");
         assertThat(fresh).isNotEqualTo(copy);
     }
 
     @Test
-    void aShopTrimsItsCopyAndTypesItsOwnCharts() throws Exception {
+    void aShopLabelsByAnotherSystemTrimsItsTableAndTypesItsOwn() throws Exception {
         Owner owner = api.signup();
-        String eu = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes_eu\"}"), owner.token()), "$.id");
+        String sneakers = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"sneakers\"}"), owner.token()),
+                "$.id");
 
-        // whole sizes only, and a 49 for the big feet
-        api.call(json(patch("/size-charts/" + eu), """
-                {"labels":["38","39","40","41","42","43","44","45","49"],"shortName":""}"""), owner.token())
+        // labelled by EU from now on, and without the two biggest sizes
+        api.call(json(patch("/size-charts/" + sneakers), """
+                {"systems":["EU","US M","US W","UK","CM"],
+                 "rows":[["42","8.5","10","7.5","26.5"],["42.5","9","10.5","8","27"],["43","9.5","11","8.5","27.5"]]}"""),
+                owner.token())
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.labels", hasSize(9)))
-                .andExpect(jsonPath("$.shortName").doesNotExist());
+                .andExpect(jsonPath("$.systems").value(contains("EU", "US M", "US W", "UK", "CM")))
+                .andExpect(jsonPath("$.rows", hasSize(3)))
+                .andExpect(jsonPath("$.rows[1]").value(contains("42.5", "9", "10.5", "8", "27")));
+        api.call(json(patch("/size-charts/" + sneakers), "{\"systems\":[\"EU\"]}"), owner.token())
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("invalid_size_chart"));
 
-        // typed by the shop: spaces trimmed, blanks and repeats dropped, order kept
+        // typed by the shop: trimmed, blank rows dropped, short rows filled with "no match"
         api.call(json(post("/size-charts"), """
-                {"name":"Rings","shortName":"No.","labels":[" 6 ","7","","7","8"]}"""), owner.token())
+                {"name":"Rings","systems":["US"," EU "],"rows":[[" 6 ","51.5"],["7","54"],["",""],["8"]]}"""),
+                owner.token())
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.labels").value(contains("6", "7", "8")))
+                .andExpect(jsonPath("$.systems").value(contains("US", "EU")))
+                .andExpect(jsonPath("$.rows[0]").value(contains("6", "51.5")))
+                .andExpect(jsonPath("$.rows[2]").value(contains("8", "")))
                 .andExpect(jsonPath("$.kind").value("OTHER"))
                 .andExpect(jsonPath("$.templateKey").doesNotExist());
 
-        api.call(json(post("/size-charts"), "{\"name\":\"Empty\",\"labels\":[\" \"]}"), owner.token())
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("invalid_size_labels"));
-        api.call(json(post("/size-charts"), "{\"labels\":[\"S\"]}"), owner.token())
+        String table = "{\"name\":\"Bad\",\"systems\":%s,\"rows\":%s}";
+        expectRefused(owner, table.formatted("[\"US\"]", "[[\"6\"],[\"6\"]]"), "duplicate_size");
+        expectRefused(owner, table.formatted("[\"US\",\"EU\"]", "[[\"\",\"51.5\"]]"), "size_label_missing");
+        expectRefused(owner, table.formatted("[\"US\",\"us\"]", "[[\"6\",\"6\"]]"), "duplicate_size_system");
+        expectRefused(owner, table.formatted("[\"US\"]", "[[\"6\",\"51.5\"]]"), "invalid_size_chart");
+        expectRefused(owner, table.formatted("[]", "[[\"6\"]]"), "invalid_size_chart");
+        expectRefused(owner, table.formatted("[\"US\"]", "[[\"" + "9".repeat(21) + "\"]]"), "size_label_too_long");
+        api.call(json(post("/size-charts"), "{\"systems\":[\"US\"],\"rows\":[[\"6\"]]}"), owner.token())
                 .andExpect(status().isBadRequest());
-        api.call(json(patch("/size-charts/" + eu), "{\"labels\":[\"" + "9".repeat(33) + "\"]}"), owner.token())
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("size_label_too_long"));
     }
 
     @Test
     void aCategoryOpensWithItsChartUntilTheChartIsRemoved() throws Exception {
         Owner owner = api.signup();
-        String usMen = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes_us_men\"}"),
-                owner.token()), "$.id");
+        String shoes = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes\"}"), owner.token()), "$.id");
         String footwear = read(api.call(json(post("/categories"), """
-                {"name":"Footwear","sizeChartId":"%s"}""".formatted(usMen)), owner.token())
+                {"name":"Footwear","sizeChartId":"%s"}""".formatted(shoes)), owner.token())
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.sizeChartId").value(usMen)), "$.id");
+                .andExpect(jsonPath("$.sizeChartId").value(shoes)), "$.id");
 
         // renaming keeps the chart; clearing removes it; setting it again puts it back
         api.call(json(patch("/categories/" + footwear), "{\"name\":\"Shoes\"}"), owner.token())
-                .andExpect(jsonPath("$.sizeChartId").value(usMen));
+                .andExpect(jsonPath("$.sizeChartId").value(shoes));
         api.call(json(patch("/categories/" + footwear), "{\"clearSizeChart\":true}"), owner.token())
                 .andExpect(jsonPath("$.sizeChartId").doesNotExist());
-        api.call(json(patch("/categories/" + footwear), "{\"sizeChartId\":\"%s\"}".formatted(usMen)), owner.token())
-                .andExpect(jsonPath("$.sizeChartId").value(usMen));
+        api.call(json(patch("/categories/" + footwear), "{\"sizeChartId\":\"%s\"}".formatted(shoes)), owner.token())
+                .andExpect(jsonPath("$.sizeChartId").value(shoes));
 
         // a removed chart leaves the category without one
-        api.call(delete("/size-charts/" + usMen), owner.token()).andExpect(status().isNoContent());
+        api.call(delete("/size-charts/" + shoes), owner.token()).andExpect(status().isNoContent());
         api.call(get("/categories"), owner.token())
                 .andExpect(jsonPath("$[0].sizeChartId").doesNotExist());
-        api.call(json(patch("/categories/" + footwear), "{\"sizeChartId\":\"%s\"}".formatted(usMen)), owner.token())
+        api.call(json(patch("/categories/" + footwear), "{\"sizeChartId\":\"%s\"}".formatted(shoes)), owner.token())
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("size_chart_not_found"));
     }
 
     @Test
-    void oneModelInManySizesIsOneProductPerSizeWithItsOwnOpeningStock() throws Exception {
+    void eachSizeIsItsOwnProductAndKnowsItsSizeInEverySystem() throws Exception {
         Owner owner = api.signup();
-        String usMen = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes_us_men\"}"),
-                owner.token()), "$.id");
+        String shoes = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes\"}"), owner.token()), "$.id");
         String footwear = read(api.call(json(post("/categories"), "{\"name\":\"Footwear\"}"), owner.token()), "$.id");
 
-        String body = api.call(json(post("/products/sizes"), """
+        String body = body(api.call(json(post("/products/sizes"), """
                 {"name":"Converse Chuck 70 Black","categoryId":"%s","unit":"PIECE","retailPrice":180000,
                  "sizeChartId":"%s","locationId":"%s","unitCost":120000,
-                 "sizes":[{"label":"9","quantity":2},{"label":"8.5","quantity":1},{"label":"10"}]}"""
-                .formatted(footwear, usMen, owner.mainLocationId())), owner.token())
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
+                 "sizes":[{"label":"42","quantity":2},{"label":"41","quantity":1},{"label":"43"}]}"""
+                .formatted(footwear, shoes, owner.mainLocationId())), owner.token())
+                .andExpect(status().isCreated()));
 
-        // in the chart's order, each its own product with the size in its name
+        // in the chart's order, named by the labelling system, the others beside it
         List<String> names = JsonPath.read(body, "$[*].name");
-        assertThat(names).containsExactly("Converse Chuck 70 Black · US M 8.5", "Converse Chuck 70 Black · US M 9",
-                "Converse Chuck 70 Black · US M 10");
+        assertThat(names).containsExactly("Converse Chuck 70 Black · EU 41", "Converse Chuck 70 Black · EU 42",
+                "Converse Chuck 70 Black · EU 43");
         List<String> labels = JsonPath.read(body, "$[*].sizeLabel");
-        assertThat(labels).containsExactly("8.5", "9", "10");
+        assertThat(labels).containsExactly("41", "42", "43");
+        List<String> equivalents = JsonPath.read(body, "$[*].sizeEquivalents");
+        assertThat(equivalents).containsExactly("UK 7.5 · US M 8.5 · US W 10 · CM 26",
+                "UK 8 · US M 9 · US W 10.5 · CM 26.5", "UK 9 · US M 10 · US W 11.5 · CM 27");
         List<String> groups = JsonPath.read(body, "$[*].productGroupKey");
         assertThat(groups).doesNotContainNull().containsOnly(groups.get(0));
         assertThat(groups.get(0)).startsWith("FOO-");
         List<String> skus = JsonPath.read(body, "$[*].sku");
-        assertThat(skus).containsExactly(groups.get(0) + "-8.5", groups.get(0) + "-9", groups.get(0) + "-10");
+        assertThat(skus).containsExactly(groups.get(0) + "-41", groups.get(0) + "-42", groups.get(0) + "-43");
         List<String> charts = JsonPath.read(body, "$[*].sizeChartId");
-        assertThat(charts).containsOnly(usMen);
+        assertThat(charts).containsOnly(shoes);
 
         // stock per size, from one opening document
         List<String> ids = JsonPath.read(body, "$[*].id");
@@ -185,57 +199,61 @@ class SizeChartTest extends IntegrationTest {
                 .andExpect(jsonPath("$[0].quantity").value(2));
         api.call(get("/stock-balances?productId=" + ids.get(2)), owner.token())
                 .andExpect(jsonPath("$", hasSize(0)));
-        String documents = api.call(get("/stock-documents"), owner.token()).andReturn().getResponse()
-                .getContentAsString();
-        List<String> documentIds = JsonPath.read(documents, "$[*].id");
+        List<String> documentIds = JsonPath.read(body(api.call(get("/stock-documents"), owner.token())), "$[*].id");
         assertThat(documentIds).hasSize(1);
         api.call(get("/stock-documents/" + documentIds.get(0)), owner.token())
                 .andExpect(jsonPath("$.type").value("OPENING"))
                 .andExpect(jsonPath("$.lines", hasSize(2)));
 
-        // a size is a product like any other: it sells, and editing one leaves the others alone
-        api.call(json(patch("/products/" + ids.get(1)), "{\"retailPrice\":175000}"), owner.token())
+        // this brand runs half a size small: the shop corrects one product, not the chart
+        api.call(json(patch("/products/" + ids.get(1)), "{\"sizeEquivalents\":\"UK 7.5 · US M 8.5\",\"retailPrice\":175000}"),
+                owner.token())
+                .andExpect(jsonPath("$.sizeEquivalents").value("UK 7.5 · US M 8.5"))
                 .andExpect(jsonPath("$.retailPrice").value(175000))
-                .andExpect(jsonPath("$.sizeLabel").value("9"));
+                .andExpect(jsonPath("$.sizeLabel").value("42"));
         api.call(get("/products/" + ids.get(0)), owner.token())
-                .andExpect(jsonPath("$.retailPrice").value(180000));
+                .andExpect(jsonPath("$.retailPrice").value(180000))
+                .andExpect(jsonPath("$.sizeEquivalents").value("UK 7.5 · US M 8.5 · US W 10 · CM 26"));
+        api.call(json(patch("/products/" + ids.get(1)), "{\"sizeEquivalents\":\"\"}"), owner.token())
+                .andExpect(jsonPath("$.sizeEquivalents").doesNotExist());
     }
 
     @Test
     void theSizesAreSavedAllOrNothing() throws Exception {
         Owner owner = api.signup();
-        String letters = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"clothes_letter\"}"),
+        String womens = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"womens_clothes\"}"),
                 owner.token()), "$.id");
         String request = """
                 {"name":"Silk Blouse","unit":"PIECE","retailPrice":45000,"sizeChartId":"%s",
                  "locationId":%s,"unitCost":30000,"sizes":%s}""";
 
-        api.call(json(post("/products/sizes"), request.formatted(letters, "\"" + owner.mainLocationId() + "\"",
+        api.call(json(post("/products/sizes"), request.formatted(womens, "\"" + owner.mainLocationId() + "\"",
                 "[{\"label\":\"M\",\"quantity\":3},{\"label\":\"XXXXL\",\"quantity\":1}]")), owner.token())
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("size_not_in_chart"));
-        api.call(json(post("/products/sizes"), request.formatted(letters, "\"" + owner.mainLocationId() + "\"",
+        api.call(json(post("/products/sizes"), request.formatted(womens, "\"" + owner.mainLocationId() + "\"",
                 "[{\"label\":\"M\"},{\"label\":\"m\"}]")), owner.token())
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("duplicate_size"));
-        api.call(json(post("/products/sizes"), request.formatted(letters, "null",
+        api.call(json(post("/products/sizes"), request.formatted(womens, "null",
                 "[{\"label\":\"M\",\"quantity\":3}]")), owner.token())
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("location_required"));
-        api.call(json(post("/products/sizes"), request.formatted(letters, "null", "[]")), owner.token())
+        api.call(json(post("/products/sizes"), request.formatted(womens, "null", "[]")), owner.token())
                 .andExpect(status().isBadRequest());
         api.call(get("/products"), owner.token()).andExpect(jsonPath("$", hasSize(0)));
 
-        // no stock yet is fine: the sizes exist and wait for a stock-in; a size typed in any case matches
-        api.call(json(post("/products/sizes"), request.formatted(letters, "null",
+        // no stock yet is fine: the sizes wait for a stock-in; a size typed in any case matches.
+        // S, M, L need no system name in front of them
+        api.call(json(post("/products/sizes"), request.formatted(womens, "null",
                 "[{\"label\":\"s\"},{\"label\":\"M\",\"quantity\":0}]")), owner.token())
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$[*].name").value(contains("Silk Blouse · S",
-                        "Silk Blouse · M")));
+                .andExpect(jsonPath("$[*].name").value(contains("Silk Blouse · S", "Silk Blouse · M")))
+                .andExpect(jsonPath("$[0].sizeEquivalents").value("EU 36 · UK 8 · US 4"));
 
         // a removed chart makes no more products
-        api.call(delete("/size-charts/" + letters), owner.token()).andExpect(status().isNoContent());
-        api.call(json(post("/products/sizes"), request.formatted(letters, "null", "[{\"label\":\"L\"}]")),
+        api.call(delete("/size-charts/" + womens), owner.token()).andExpect(status().isNoContent());
+        api.call(json(post("/products/sizes"), request.formatted(womens, "null", "[{\"label\":\"L\"}]")),
                 owner.token())
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("size_chart_not_found"));
@@ -244,28 +262,48 @@ class SizeChartTest extends IntegrationTest {
     @Test
     void chartsBelongToTheirShopAndOnlyManagersChangeThem() throws Exception {
         Owner owner = api.signup();
-        String eu = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes_eu\"}"), owner.token()), "$.id");
+        String shoes = read(api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes\"}"), owner.token()), "$.id");
 
         Owner other = api.signup();
         api.call(get("/size-charts"), other.token()).andExpect(jsonPath("$", hasSize(0)));
         api.call(json(post("/products/sizes"), """
                 {"name":"Borrowed","unit":"PIECE","retailPrice":1000,"sizeChartId":"%s","sizes":[{"label":"40"}]}"""
-                .formatted(eu)), other.token())
+                .formatted(shoes)), other.token())
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("size_chart_not_found"));
-        api.call(json(patch("/size-charts/" + eu), "{\"name\":\"Mine now\"}"), other.token())
+        api.call(json(patch("/size-charts/" + shoes), "{\"name\":\"Mine now\"}"), other.token())
                 .andExpect(status().isNotFound());
 
         String cashier = api.member(owner, "CASHIER");
         api.call(get("/size-charts"), cashier).andExpect(jsonPath("$", hasSize(1)));
-        api.call(json(post("/size-charts"), "{\"templateKey\":\"shoes_uk\"}"), cashier)
+        api.call(json(post("/size-charts"), "{\"templateKey\":\"sneakers\"}"), cashier)
                 .andExpect(status().isForbidden());
         api.call(json(post("/products/sizes"), """
                 {"name":"Cashier shoe","unit":"PIECE","retailPrice":1000,"sizeChartId":"%s","sizes":[{"label":"40"}]}"""
-                .formatted(eu)), cashier)
+                .formatted(shoes)), cashier)
                 .andExpect(status().isForbidden());
         String manager = api.member(owner, "STOCK_MANAGER");
-        api.call(json(patch("/size-charts/" + eu), "{\"name\":\"EU shoes\"}"), manager)
+        api.call(json(patch("/size-charts/" + shoes), "{\"name\":\"EU shoes\"}"), manager)
                 .andExpect(status().isOk());
+    }
+
+    private void expectRefused(Owner owner, String chart, String code) throws Exception {
+        api.call(json(post("/size-charts"), chart), owner.token())
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(code));
+    }
+
+    private static List<String> systemsOf(String library, String key) {
+        List<List<String>> found = JsonPath.read(library, "$[?(@.key == '" + key + "')].systems");
+        return found.get(0);
+    }
+
+    private static List<List<String>> rowsOf(String library, String key) {
+        List<List<List<String>>> found = JsonPath.read(library, "$[?(@.key == '" + key + "')].rows");
+        return found.get(0);
+    }
+
+    private static String body(org.springframework.test.web.servlet.ResultActions result) throws Exception {
+        return result.andReturn().getResponse().getContentAsString();
     }
 }

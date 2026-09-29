@@ -32,11 +32,23 @@ import app.trillopos.shared.web.ApiException;
 @Service
 public class ProductService {
 
+    /** {@code sizeEquivalents}: the same size in other systems; an empty one removes it. */
     public record ProductCommand(UUID id, String sku, String name, UUID categoryId, UUID defaultSupplierId,
             ProductUnit unit, String sizeLabel, String productGroupKey, BigDecimal retailPrice,
             BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory, Integer reorderPoint,
             Boolean sellInPos, Boolean sellOnline, Boolean active, List<String> barcodes,
-            List<OpeningStock> openingStock) {
+            List<OpeningStock> openingStock, String sizeEquivalents) {
+
+        /** A product without size equivalents. */
+        public ProductCommand(UUID id, String sku, String name, UUID categoryId, UUID defaultSupplierId,
+                ProductUnit unit, String sizeLabel, String productGroupKey, BigDecimal retailPrice,
+                BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory, Integer reorderPoint,
+                Boolean sellInPos, Boolean sellOnline, Boolean active, List<String> barcodes,
+                List<OpeningStock> openingStock) {
+            this(id, sku, name, categoryId, defaultSupplierId, unit, sizeLabel, productGroupKey, retailPrice,
+                    wholesalePrice, taxable, trackInventory, reorderPoint, sellInPos, sellOnline, active, barcodes,
+                    openingStock, null);
+        }
     }
 
     /**
@@ -127,8 +139,9 @@ public class ProductService {
 
     /**
      * Every size of one model at once, all or nothing, in the chart's order. Each size is its own
-     * product (spec §4, flat SKUs): "Converse Chuck 70 Black · EU 38", SKU "FOO-7KQ2MX-38", all
-     * sharing the product group key "FOO-7KQ2MX". Opening stock for the sizes that have some is one
+     * product (spec §4, flat SKUs): "Converse Chuck 70 Black · EU 42", SKU "FOO-7KQ2MX-42", all
+     * sharing the product group key "FOO-7KQ2MX", each with its size in the chart's other systems
+     * ("UK 8 · US M 9 · US W 10.5 · CM 26.5"). Opening stock for the sizes that have some is one
      * OPENING document with a line per size.
      */
     @Transactional
@@ -146,10 +159,11 @@ public class ProductService {
         }
         Map<String, BigDecimal> quantities = new HashMap<>();
         for (SizeCommand size : requested) {
-            String label = chart.findLabel(size.label());
-            if (label == null) {
+            List<String> row = chart.row(size.label());
+            if (row == null) {
                 throw ApiException.badRequest("size_not_in_chart", size.label() + " is not a size in " + chart.getName());
             }
+            String label = row.get(0);
             if (quantities.containsKey(label)) {
                 throw ApiException.badRequest("duplicate_size", label + " is listed twice");
             }
@@ -167,16 +181,19 @@ public class ProductService {
         String groupKey = generateGroupKey(category(command.categoryId()));
         List<Product> created = new ArrayList<>();
         List<LineCommand> opening = new ArrayList<>();
-        for (String label : chart.getLabels()) {
+        List<List<String>> rows = chart.rows();
+        for (int index = 0; index < rows.size(); index++) {
+            List<String> row = rows.get(index);
+            String label = row.get(0);
             if (!quantities.containsKey(label)) {
                 continue;
             }
-            String sku = groupKey + "-" + skuPart(label, chart.getLabels().indexOf(label));
+            String sku = groupKey + "-" + skuPart(label, index);
             Product product = create(new ProductCommand(null, products.existsBySku(sku) ? null : sku,
                     model + " · " + chart.display(label), command.categoryId(), command.defaultSupplierId(),
                     command.unit(), label, groupKey, command.retailPrice(), command.wholesalePrice(),
                     command.taxable(), command.trackInventory(), command.reorderPoint(), command.sellInPos(),
-                    command.sellOnline(), command.active(), null, null));
+                    command.sellOnline(), command.active(), null, null, chart.equivalents(row)));
             product.setSizeChartId(chart.getId());
             created.add(product);
             if (quantities.get(label) != null) {
@@ -287,6 +304,9 @@ public class ProductService {
         }
         if (command.productGroupKey() != null) {
             product.setProductGroupKey(command.productGroupKey());
+        }
+        if (command.sizeEquivalents() != null) {
+            product.setSizeEquivalents(command.sizeEquivalents().isBlank() ? null : command.sizeEquivalents().strip());
         }
         if (command.wholesalePrice() != null) {
             product.setWholesalePrice(command.wholesalePrice());

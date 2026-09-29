@@ -36,31 +36,36 @@ import app.trillopos.inventory.StockDocumentService.OpeningStock;
 class ProductController {
 
     record ProductView(UUID id, String sku, String name, UUID categoryId, UUID defaultSupplierId, ProductUnit unit,
-            String sizeLabel, String productGroupKey, UUID sizeChartId, BigDecimal retailPrice,
-            BigDecimal wholesalePrice, boolean taxable, boolean trackInventory, int reorderPoint, boolean sellInPos,
-            boolean sellOnline, boolean active, List<String> barcodes) {
+            String sizeLabel, String sizeEquivalents, String productGroupKey, UUID sizeChartId,
+            BigDecimal retailPrice, BigDecimal wholesalePrice, boolean taxable, boolean trackInventory,
+            int reorderPoint, boolean sellInPos, boolean sellOnline, boolean active, List<String> barcodes) {
     }
 
     record OpeningStockWrite(@NotNull UUID locationId, @NotNull BigDecimal quantity, BigDecimal unitCost) {
     }
 
-    /** Create and update share one shape; on update every field is optional. Opening stock is create-only. */
+    /**
+     * Create and update share one shape; on update every field is optional. Opening stock is create-only.
+     * {@code sizeEquivalents}: the same size in other systems, "UK 8 · US M 9"; empty removes it.
+     */
     record ProductWrite(UUID id, @Size(max = 64) String sku, @Size(max = 200) String name, UUID categoryId,
             UUID defaultSupplierId, ProductUnit unit, @Size(max = 32) String sizeLabel,
             @Size(max = 64) String productGroupKey, @DecimalMin("0") BigDecimal retailPrice,
             @DecimalMin("0") BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory,
             @Min(0) Integer reorderPoint, Boolean sellInPos, Boolean sellOnline, Boolean active,
-            List<String> barcodes, List<@Valid OpeningStockWrite> openingStock) {
+            List<String> barcodes, List<@Valid OpeningStockWrite> openingStock,
+            @Size(max = 255) String sizeEquivalents) {
 
         ProductCommand command() {
             return new ProductCommand(id, sku, name, categoryId, defaultSupplierId, unit, sizeLabel, productGroupKey,
                     retailPrice, wholesalePrice, taxable, trackInventory, reorderPoint, sellInPos, sellOnline, active,
                     barcodes, openingStock == null ? null : openingStock.stream()
-                            .map(o -> new OpeningStock(o.locationId(), o.quantity(), o.unitCost())).toList());
+                            .map(o -> new OpeningStock(o.locationId(), o.quantity(), o.unitCost())).toList(),
+                    sizeEquivalents);
         }
     }
 
-    record SizeWrite(@NotBlank @Size(max = 32) String label, @DecimalMin("0") BigDecimal quantity) {
+    record SizeWrite(@NotBlank @Size(max = SizeChart.MAX_LABEL_LENGTH) String label, @DecimalMin("0") BigDecimal quantity) {
     }
 
     /**
@@ -72,7 +77,7 @@ class ProductController {
             @DecimalMin("0") BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory,
             @Min(0) Integer reorderPoint, Boolean sellInPos, Boolean sellOnline, Boolean active,
             @NotNull UUID sizeChartId, UUID locationId, @DecimalMin("0") BigDecimal unitCost,
-            @NotEmpty @Size(max = SizeChart.MAX_LABELS) List<@Valid SizeWrite> sizes) {
+            @NotEmpty @Size(max = SizeChart.MAX_ROWS) List<@Valid SizeWrite> sizes) {
 
         SizesCommand command() {
             return new SizesCommand(name, categoryId, defaultSupplierId, unit, retailPrice, wholesalePrice, taxable,
@@ -161,8 +166,8 @@ class ProductController {
         List<String> codes = barcodes.findAllByProductIdOrderByCreatedAtAsc(p.getId()).stream()
                 .map(ProductBarcode::getBarcode).toList();
         return new ProductView(p.getId(), p.getSku(), p.getName(), p.getCategoryId(), p.getDefaultSupplierId(),
-                p.getUnit(), p.getSizeLabel(), p.getProductGroupKey(), p.getSizeChartId(), p.getRetailPrice(),
-                p.getWholesalePrice(), p.isTaxable(), p.isTrackInventory(), p.getReorderPoint(), p.isSellInPos(),
-                p.isSellOnline(), p.isActive(), codes);
+                p.getUnit(), p.getSizeLabel(), p.getSizeEquivalents(), p.getProductGroupKey(), p.getSizeChartId(),
+                p.getRetailPrice(), p.getWholesalePrice(), p.isTaxable(), p.isTrackInventory(), p.getReorderPoint(),
+                p.isSellInPos(), p.isSellOnline(), p.isActive(), codes);
     }
 }
