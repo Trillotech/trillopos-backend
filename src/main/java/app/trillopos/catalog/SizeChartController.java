@@ -26,41 +26,42 @@ import app.trillopos.catalog.SizeChartLibrary.Template;
 import app.trillopos.shared.web.ApiException;
 
 /**
- * The shop's size charts, and the library they are copied from. Taking a chart from the library
+ * The shop's size tables, and the library they are copied from. Taking a table from the library
  * twice returns the copy the shop already has, edits and all.
  */
 @RestController
 @RequestMapping("/size-charts")
 class SizeChartController {
 
-    record SizeChartView(UUID id, String name, String shortName, SizeChartKind kind, String templateKey,
-            List<String> labels) {
+    /** {@code systems}: the column names, the labelling one first; {@code rows}: one per size, a cell per system. */
+    record SizeChartView(UUID id, String name, SizeChartKind kind, String templateKey, List<String> systems,
+            List<List<String>> rows) {
 
         static SizeChartView of(SizeChart c) {
-            return new SizeChartView(c.getId(), c.getName(), c.getShortName(), c.getKind(), c.getTemplateKey(),
-                    c.getLabels());
+            return new SizeChartView(c.getId(), c.getName(), c.getKind(), c.getTemplateKey(), c.getSystems(),
+                    c.rows());
         }
     }
 
-    record SizeChartTemplateView(String key, SizeChartKind kind, String name, String shortName, List<String> labels) {
+    record SizeChartTemplateView(String key, SizeChartKind kind, String name, List<String> systems,
+            List<List<String>> rows) {
 
         static SizeChartTemplateView of(Template t) {
-            return new SizeChartTemplateView(t.key(), t.kind(), t.name(), t.shortName(), t.labels());
+            return new SizeChartTemplateView(t.key(), t.kind(), t.name(), t.systems(), t.rows());
         }
     }
 
     /**
      * From the library: {@code templateKey}, and {@code name} in the shop's language if wanted.
-     * Typed by the shop: {@code name}, {@code labels} smallest first, and optionally {@code shortName}
-     * and {@code kind}.
+     * Typed by the shop: {@code name}, {@code systems} and {@code rows}, and optionally {@code kind}.
      */
-    record SizeChartCreate(@Size(max = 40) String templateKey, @Size(max = 80) String name,
-            @Size(max = 10) String shortName, SizeChartKind kind, List<String> labels) {
+    record SizeChartCreate(@Size(max = 40) String templateKey, @Size(max = 80) String name, SizeChartKind kind,
+            List<String> systems, List<List<String>> rows) {
     }
 
-    /** Every field optional; an empty {@code shortName} removes it. */
-    record SizeChartUpdate(@Size(min = 1, max = 80) String name, @Size(max = 10) String shortName,
-            SizeChartKind kind, List<String> labels) {
+    /** Every field optional; {@code systems} and {@code rows} replace the table together. */
+    record SizeChartUpdate(@Size(min = 1, max = 80) String name, SizeChartKind kind, List<String> systems,
+            List<List<String>> rows) {
     }
 
     private final SizeChartRepository charts;
@@ -95,17 +96,17 @@ class SizeChartController {
                 return ResponseEntity.ok(SizeChartView.of(existing.get()));
             }
             String name = blankToNull(request.name());
-            SizeChart copy = charts.save(new SizeChart(name == null ? template.name() : name, template.shortName(),
-                    template.kind(), template.key(), template.labels()));
+            SizeChart copy = charts.save(new SizeChart(name == null ? template.name() : name, template.kind(),
+                    template.key(), SizeChart.check(template.systems(), template.rows())));
             return ResponseEntity.status(HttpStatus.CREATED).body(SizeChartView.of(copy));
         }
         String name = blankToNull(request.name());
         if (name == null) {
             throw ApiException.badRequest("validation_failed", "a size chart needs a name");
         }
-        SizeChart chart = charts.save(new SizeChart(name, blankToNull(request.shortName()),
+        SizeChart chart = charts.save(new SizeChart(name,
                 request.kind() == null ? SizeChartKind.OTHER : request.kind(), null,
-                SizeChart.normalizeLabels(request.labels())));
+                SizeChart.check(request.systems(), request.rows())));
         return ResponseEntity.status(HttpStatus.CREATED).body(SizeChartView.of(chart));
     }
 
@@ -117,14 +118,14 @@ class SizeChartController {
         if (request.name() != null && !request.name().isBlank()) {
             chart.setName(request.name().strip());
         }
-        if (request.shortName() != null) {
-            chart.setShortName(blankToNull(request.shortName()));
-        }
         if (request.kind() != null) {
             chart.setKind(request.kind());
         }
-        if (request.labels() != null) {
-            chart.setLabels(SizeChart.normalizeLabels(request.labels()));
+        if (request.systems() != null || request.rows() != null) {
+            if (request.systems() == null || request.rows() == null) {
+                throw ApiException.badRequest("invalid_size_chart", "systems and rows change together");
+            }
+            chart.setSizes(SizeChart.check(request.systems(), request.rows()));
         }
         return SizeChartView.of(chart);
     }

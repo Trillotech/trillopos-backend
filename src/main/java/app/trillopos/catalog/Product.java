@@ -46,6 +46,10 @@ public class Product extends TenantEntity {
     @Column(name = "size_chart_id")
     private UUID sizeChartId;
 
+    /** The same size in other systems, "UK 8 · US M 9 · CM 26.5": shown beside the size, found by search. */
+    @Column(name = "size_equivalents", length = 255)
+    private String sizeEquivalents;
+
     @Column(name = "retail_price", nullable = false, precision = 19, scale = 4)
     private BigDecimal retailPrice;
 
@@ -150,6 +154,14 @@ public class Product extends TenantEntity {
 
     public void setSizeChartId(UUID sizeChartId) {
         this.sizeChartId = sizeChartId;
+    }
+
+    public String getSizeEquivalents() {
+        return sizeEquivalents;
+    }
+
+    public void setSizeEquivalents(String sizeEquivalents) {
+        this.sizeEquivalents = sizeEquivalents;
     }
 
     public BigDecimal getRetailPrice() {
