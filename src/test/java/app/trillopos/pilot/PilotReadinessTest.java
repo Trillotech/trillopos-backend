@@ -201,6 +201,49 @@ class PilotReadinessTest extends IntegrationTest {
                 .andExpect(jsonPath("$[0].quantity").value(2));
     }
 
+    @Test
+    void aSupplierAndALocationMayBeSavedWithoutAPhone() throws Exception {
+        Owner owner = api.signup();
+        // the web form sends the empty phone box as ""
+        api.call(json(post("/suppliers"), "{\"name\":\"No Phone Wholesale\",\"phone\":\"\"}"), owner.token())
+                .andExpect(status().is2xxSuccessful())
+                .andExpect(jsonPath("$.name").value("No Phone Wholesale"));
+        api.call(json(post("/locations"), """
+                {"code":"WH2","name":"Back room","type":"WAREHOUSE","phone":""}"""), owner.token())
+                .andExpect(status().is2xxSuccessful());
+    }
+
+    @Test
+    void aSinglePaymentWithoutAnAmountPaysTheWholeTotal() throws Exception {
+        Owner owner = api.signup();
+        api.call(json(patch("/organization"), "{\"businessType\":\"ONLINE\",\"defaultTaxRate\":0}"), owner.token())
+                .andExpect(status().isOk());
+        String scarf = read(api.call(json(post("/products"), """
+                {"name":"Silk Scarf","unit":"PIECE","retailPrice":22000,
+                 "openingStock":[{"locationId":"%s","quantity":5,"unitCost":15000}]}"""
+                .formatted(owner.mainLocationId())), owner.token()), "$.id");
+
+        // the owner picks KBZPay and leaves the amount empty: the sale takes the whole total
+        api.call(json(post("/sales/checkout"), """
+                {"idempotencyKey":"whole-1","locationId":"%s","channel":"ONLINE",
+                 "lines":[{"productId":"%s","quantity":2}],
+                 "payments":[{"method":"KBZ_PAY","referenceNo":"KBZ-777"}]}"""
+                .formatted(owner.mainLocationId(), scarf)), owner.token())
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.total").value(44000))
+                .andExpect(jsonPath("$.payments[0].amount").value(44000))
+                .andExpect(jsonPath("$.dueAmount").value(0));
+
+        // split payments still say how much each one is
+        api.call(json(post("/sales/checkout"), """
+                {"idempotencyKey":"whole-2","locationId":"%s","channel":"ONLINE",
+                 "lines":[{"productId":"%s","quantity":1}],
+                 "payments":[{"method":"KBZ_PAY","amount":10000},{"method":"WAVE_PAY"}]}"""
+                .formatted(owner.mainLocationId(), scarf)), owner.token())
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("invalid_payment"));
+    }
+
     // ───────────────────────────────────────────────────────────── helpers
 
     private String signup() throws Exception {

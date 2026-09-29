@@ -68,7 +68,7 @@ class LocationController {
         }
         Location location = new Location(code, request.name(), request.type());
         location.setAddress(request.address());
-        location.setPhone(Phones.normalize(request.phone()));
+        location.setPhone(Phones.normalizeOptional(request.phone()));
         return LocationView.of(locations.save(location));
     }
 
@@ -85,7 +85,7 @@ class LocationController {
             location.setAddress(request.address());
         }
         if (request.phone() != null) {
-            location.setPhone(Phones.normalize(request.phone()));
+            location.setPhone(Phones.normalizeOptional(request.phone()));
         }
         if (request.active() != null) {
             location.setActive(request.active());

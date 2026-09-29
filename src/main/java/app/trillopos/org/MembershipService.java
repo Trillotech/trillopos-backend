@@ -59,7 +59,7 @@ public class MembershipService {
         if (command.locationId() != null && locations.findById(command.locationId()).isEmpty()) {
             throw ApiException.badRequest("location_not_found", "no such location");
         }
-        String phone = Phones.normalize(command.phone());
+        String phone = Phones.normalizeOptional(command.phone());
 
         if (command.pin() != null) {
             if (phone != null) {
