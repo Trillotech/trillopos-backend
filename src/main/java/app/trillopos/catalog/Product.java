@@ -42,6 +42,10 @@ public class Product extends TenantEntity {
     @Column(name = "product_group_key", length = 64)
     private String productGroupKey;
 
+    /** The size chart {@code sizeLabel} came from, when the product was created as one of its sizes. */
+    @Column(name = "size_chart_id")
+    private UUID sizeChartId;
+
     @Column(name = "retail_price", nullable = false, precision = 19, scale = 4)
     private BigDecimal retailPrice;
 
@@ -138,6 +142,14 @@ public class Product extends TenantEntity {
 
     public void setProductGroupKey(String productGroupKey) {
         this.productGroupKey = productGroupKey;
+    }
+
+    public UUID getSizeChartId() {
+        return sizeChartId;
+    }
+
+    public void setSizeChartId(UUID sizeChartId) {
+        this.sizeChartId = sizeChartId;
     }
 
     public BigDecimal getRetailPrice() {

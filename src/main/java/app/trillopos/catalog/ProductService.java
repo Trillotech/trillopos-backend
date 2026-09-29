@@ -3,8 +3,13 @@ package app.trillopos.catalog;
 import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -34,6 +39,20 @@ public class ProductService {
             List<OpeningStock> openingStock) {
     }
 
+    /**
+     * One model in several sizes of one chart: {@code name} is the model ("Converse Chuck 70 Black"),
+     * each size becomes its own product. Opening stock, when a size has any, goes to {@code locationId}
+     * at {@code unitCost}.
+     */
+    public record SizesCommand(String name, UUID categoryId, UUID defaultSupplierId, ProductUnit unit,
+            BigDecimal retailPrice, BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory,
+            Integer reorderPoint, Boolean sellInPos, Boolean sellOnline, Boolean active, UUID sizeChartId,
+            UUID locationId, BigDecimal unitCost, List<SizeCommand> sizes) {
+    }
+
+    public record SizeCommand(String label, BigDecimal quantity) {
+    }
+
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String SKU_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 
@@ -46,12 +65,14 @@ public class ProductService {
     private final StockDocumentService stockDocuments;
     private final StockBalanceRepository balances;
     private final OrganizationRepository organizations;
+    private final SizeChartRepository sizeCharts;
     private final Clock clock;
 
     public ProductService(ProductRepository products, ProductBarcodeRepository barcodes,
             CategoryRepository categories, SupplierRepository suppliers, LocationRepository locations,
             LocationProductRepository locationProducts, StockDocumentService stockDocuments,
-            StockBalanceRepository balances, OrganizationRepository organizations, Clock clock) {
+            StockBalanceRepository balances, OrganizationRepository organizations, SizeChartRepository sizeCharts,
+            Clock clock) {
         this.products = products;
         this.barcodes = barcodes;
         this.categories = categories;
@@ -61,6 +82,7 @@ public class ProductService {
         this.stockDocuments = stockDocuments;
         this.balances = balances;
         this.organizations = organizations;
+        this.sizeCharts = sizeCharts;
         this.clock = clock;
     }
 
@@ -101,6 +123,71 @@ public class ProductService {
             stockDocuments.postOpeningStock(product.getId(), command.openingStock());
         }
         return product;
+    }
+
+    /**
+     * Every size of one model at once, all or nothing, in the chart's order. Each size is its own
+     * product (spec §4, flat SKUs): "Converse Chuck 70 Black · EU 38", SKU "FOO-7KQ2MX-38", all
+     * sharing the product group key "FOO-7KQ2MX". Opening stock for the sizes that have some is one
+     * OPENING document with a line per size.
+     */
+    @Transactional
+    public List<Product> createSizes(SizesCommand command) {
+        if (command.name() == null || command.name().isBlank() || command.unit() == null
+                || command.retailPrice() == null) {
+            throw ApiException.badRequest("validation_failed", "name, unit and retailPrice are required");
+        }
+        SizeChart chart = (command.sizeChartId() == null ? Optional.<SizeChart>empty()
+                : sizeCharts.findById(command.sizeChartId())).filter(c -> !c.isArchived())
+                .orElseThrow(() -> ApiException.badRequest("size_chart_not_found", "no such size chart"));
+        List<SizeCommand> requested = command.sizes() == null ? List.of() : command.sizes();
+        if (requested.isEmpty()) {
+            throw ApiException.badRequest("sizes_required", "pick at least one size");
+        }
+        Map<String, BigDecimal> quantities = new HashMap<>();
+        for (SizeCommand size : requested) {
+            String label = chart.findLabel(size.label());
+            if (label == null) {
+                throw ApiException.badRequest("size_not_in_chart", size.label() + " is not a size in " + chart.getName());
+            }
+            if (quantities.containsKey(label)) {
+                throw ApiException.badRequest("duplicate_size", label + " is listed twice");
+            }
+            BigDecimal quantity = size.quantity();
+            if (quantity != null && quantity.signum() < 0) {
+                throw ApiException.badRequest("invalid_quantity", "opening stock is zero or more");
+            }
+            quantities.put(label, quantity == null || quantity.signum() == 0 ? null : quantity);
+        }
+        if (quantities.values().stream().anyMatch(Objects::nonNull) && command.locationId() == null) {
+            throw ApiException.badRequest("location_required", "say where the opening stock is");
+        }
+
+        String model = command.name().strip();
+        String groupKey = generateGroupKey(category(command.categoryId()));
+        List<Product> created = new ArrayList<>();
+        List<LineCommand> opening = new ArrayList<>();
+        for (String label : chart.getLabels()) {
+            if (!quantities.containsKey(label)) {
+                continue;
+            }
+            String sku = groupKey + "-" + skuPart(label, chart.getLabels().indexOf(label));
+            Product product = create(new ProductCommand(null, products.existsBySku(sku) ? null : sku,
+                    model + " · " + chart.display(label), command.categoryId(), command.defaultSupplierId(),
+                    command.unit(), label, groupKey, command.retailPrice(), command.wholesalePrice(),
+                    command.taxable(), command.trackInventory(), command.reorderPoint(), command.sellInPos(),
+                    command.sellOnline(), command.active(), null, null));
+            product.setSizeChartId(chart.getId());
+            created.add(product);
+            if (quantities.get(label) != null) {
+                opening.add(new LineCommand(product.getId(), quantities.get(label), command.unitCost(), null));
+            }
+        }
+        if (!opening.isEmpty()) {
+            stockDocuments.createAndPost(new DocumentCommand(StockDocumentType.OPENING, command.locationId(), null,
+                    null, null, "Opening stock", opening));
+        }
+        return created;
     }
 
     @Transactional
@@ -250,5 +337,22 @@ public class ProductService {
             }
         }
         throw ApiException.conflict("sku_unavailable", "could not generate a unique SKU; supply one");
+    }
+
+    /** A generated SKU no product has as its SKU or its group key: the stem of a model's size SKUs. */
+    private String generateGroupKey(Category category) {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            String key = generateSku(category);
+            if (!products.existsByProductGroupKey(key)) {
+                return key;
+            }
+        }
+        throw ApiException.conflict("sku_unavailable", "could not generate a unique SKU; supply one");
+    }
+
+    /** "38", "10.5C", "0-3M", "FREESIZE"; the size's position when nothing Latin is left (a Burmese label). */
+    private static String skuPart(String label, int index) {
+        String part = label.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9.-]", "");
+        return part.isEmpty() ? String.valueOf(index + 1) : part;
     }
 }

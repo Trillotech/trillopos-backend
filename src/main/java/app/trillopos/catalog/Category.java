@@ -19,6 +19,10 @@ public class Category extends TenantEntity {
     @Column(name = "parent_id")
     private UUID parentId;
 
+    /** The size chart Add Product opens with for this category; null for goods without sizes. */
+    @Column(name = "size_chart_id")
+    private UUID sizeChartId;
+
     protected Category() {
     }
 
@@ -41,5 +45,13 @@ public class Category extends TenantEntity {
 
     public void setParentId(UUID parentId) {
         this.parentId = parentId;
+    }
+
+    public UUID getSizeChartId() {
+        return sizeChartId;
+    }
+
+    public void setSizeChartId(UUID sizeChartId) {
+        this.sizeChartId = sizeChartId;
     }
 }

@@ -11,4 +11,6 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     List<Product> findAllByArchivedAtIsNullOrderByNameAsc();
 
     boolean existsBySku(String sku);
+
+    boolean existsByProductGroupKey(String productGroupKey);
 }

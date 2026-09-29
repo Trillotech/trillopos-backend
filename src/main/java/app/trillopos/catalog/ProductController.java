@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
@@ -26,6 +27,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import app.trillopos.catalog.ProductService.ProductCommand;
+import app.trillopos.catalog.ProductService.SizeCommand;
+import app.trillopos.catalog.ProductService.SizesCommand;
 import app.trillopos.inventory.StockDocumentService.OpeningStock;
 
 @RestController
@@ -33,9 +36,9 @@ import app.trillopos.inventory.StockDocumentService.OpeningStock;
 class ProductController {
 
     record ProductView(UUID id, String sku, String name, UUID categoryId, UUID defaultSupplierId, ProductUnit unit,
-            String sizeLabel, String productGroupKey, BigDecimal retailPrice, BigDecimal wholesalePrice,
-            boolean taxable, boolean trackInventory, int reorderPoint, boolean sellInPos, boolean sellOnline,
-            boolean active, List<String> barcodes) {
+            String sizeLabel, String productGroupKey, UUID sizeChartId, BigDecimal retailPrice,
+            BigDecimal wholesalePrice, boolean taxable, boolean trackInventory, int reorderPoint, boolean sellInPos,
+            boolean sellOnline, boolean active, List<String> barcodes) {
     }
 
     record OpeningStockWrite(@NotNull UUID locationId, @NotNull BigDecimal quantity, BigDecimal unitCost) {
@@ -54,6 +57,27 @@ class ProductController {
                     retailPrice, wholesalePrice, taxable, trackInventory, reorderPoint, sellInPos, sellOnline, active,
                     barcodes, openingStock == null ? null : openingStock.stream()
                             .map(o -> new OpeningStock(o.locationId(), o.quantity(), o.unitCost())).toList());
+        }
+    }
+
+    record SizeWrite(@NotBlank @Size(max = 32) String label, @DecimalMin("0") BigDecimal quantity) {
+    }
+
+    /**
+     * One model in several sizes: {@code name} is the model, and each size becomes its own product
+     * named "model · size". {@code locationId} and {@code unitCost} are for the sizes given a quantity.
+     */
+    record SizesWrite(@NotBlank @Size(max = 150) String name, UUID categoryId, UUID defaultSupplierId,
+            @NotNull ProductUnit unit, @NotNull @DecimalMin("0") BigDecimal retailPrice,
+            @DecimalMin("0") BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory,
+            @Min(0) Integer reorderPoint, Boolean sellInPos, Boolean sellOnline, Boolean active,
+            @NotNull UUID sizeChartId, UUID locationId, @DecimalMin("0") BigDecimal unitCost,
+            @NotEmpty @Size(max = SizeChart.MAX_LABELS) List<@Valid SizeWrite> sizes) {
+
+        SizesCommand command() {
+            return new SizesCommand(name, categoryId, defaultSupplierId, unit, retailPrice, wholesalePrice, taxable,
+                    trackInventory, reorderPoint, sellInPos, sellOnline, active, sizeChartId, locationId, unitCost,
+                    sizes.stream().map(s -> new SizeCommand(s.label(), s.quantity())).toList());
         }
     }
 
@@ -93,6 +117,14 @@ class ProductController {
         return view(service.create(request.command()));
     }
 
+    /** Every size of one model at once, in the chart's order; all or nothing. */
+    @PostMapping("/sizes")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasAnyRole('OWNER', 'STOCK_MANAGER')")
+    List<ProductView> createSizes(@Valid @RequestBody SizesWrite request) {
+        return service.createSizes(request.command()).stream().map(this::view).toList();
+    }
+
     @PatchMapping("/{id}")
     @PreAuthorize("hasAnyRole('OWNER', 'STOCK_MANAGER')")
     ProductView update(@PathVariable UUID id, @Valid @RequestBody ProductWrite request) {
@@ -129,8 +161,8 @@ class ProductController {
         List<String> codes = barcodes.findAllByProductIdOrderByCreatedAtAsc(p.getId()).stream()
                 .map(ProductBarcode::getBarcode).toList();
         return new ProductView(p.getId(), p.getSku(), p.getName(), p.getCategoryId(), p.getDefaultSupplierId(),
-                p.getUnit(), p.getSizeLabel(), p.getProductGroupKey(), p.getRetailPrice(), p.getWholesalePrice(),
-                p.isTaxable(), p.isTrackInventory(), p.getReorderPoint(), p.isSellInPos(), p.isSellOnline(),
-                p.isActive(), codes);
+                p.getUnit(), p.getSizeLabel(), p.getProductGroupKey(), p.getSizeChartId(), p.getRetailPrice(),
+                p.getWholesalePrice(), p.isTaxable(), p.isTrackInventory(), p.getReorderPoint(), p.isSellInPos(),
+                p.isSellOnline(), p.isActive(), codes);
     }
 }
