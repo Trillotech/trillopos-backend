@@ -145,7 +145,7 @@ class CustomerController {
 
     private void apply(Customer customer, CustomerWrite request, Authentication auth) {
         if (request.phone() != null) {
-            String phone = request.phone().isBlank() ? null : Phones.normalize(request.phone());
+            String phone = Phones.normalizeOptional(request.phone());
             if (phone != null && !phone.equals(customer.getPhone())) {
                 customers.findByPhone(phone).ifPresent(other -> {
                     throw ApiException.conflict("phone_in_use", "another customer has " + phone);

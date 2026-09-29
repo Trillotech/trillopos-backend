@@ -53,7 +53,8 @@ class SaleController {
     record LineRequest(@NotNull UUID productId, @NotNull BigDecimal quantity, BigDecimal discountAmount) {
     }
 
-    record PaymentRequest(@NotNull PaymentMethod method, @NotNull BigDecimal amount, BigDecimal tenderedAmount,
+    /** {@code amount}: may be left out when it is the only payment; it then pays the whole total. */
+    record PaymentRequest(@NotNull PaymentMethod method, BigDecimal amount, BigDecimal tenderedAmount,
             @Size(max = 100) String referenceNo) {
     }
 

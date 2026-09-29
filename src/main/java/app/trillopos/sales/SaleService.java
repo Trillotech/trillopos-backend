@@ -459,12 +459,19 @@ public class SaleService {
 
     /**
      * Σ payments must equal the total: a completed sale has nothing due (spec §6). A CREDIT payment
-     * counts toward that sum, needs a named customer, and appears at most once.
+     * counts toward that sum, needs a named customer, and appears at most once. A lone payment
+     * without an amount is the whole total.
      */
     private static List<PaymentCommand> validatePayments(List<PaymentCommand> tenders, BigDecimal total, int minor,
             boolean hasCustomer) {
         if (tenders == null || tenders.isEmpty()) {
             throw ApiException.badRequest("payment_required", "a completed sale is paid");
+        }
+        // a single payment without an amount pays the whole total: the sale screen shows the total
+        // only on the receipt, and nobody should have to add it up by hand
+        if (tenders.size() == 1 && tenders.getFirst().amount() == null) {
+            PaymentCommand only = tenders.getFirst();
+            tenders = List.of(new PaymentCommand(only.method(), total, only.tenderedAmount(), only.referenceNo()));
         }
         BigDecimal sum = BigDecimal.ZERO;
         int credits = 0;

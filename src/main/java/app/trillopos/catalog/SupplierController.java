@@ -78,7 +78,7 @@ class SupplierController {
 
     private static void apply(Supplier supplier, SupplierWrite request) {
         if (request.phone() != null) {
-            supplier.setPhone(Phones.normalize(request.phone()));
+            supplier.setPhone(Phones.normalizeOptional(request.phone()));
         }
         if (request.address() != null) {
             supplier.setAddress(request.address());

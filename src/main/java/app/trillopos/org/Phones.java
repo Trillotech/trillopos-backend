@@ -20,6 +20,14 @@ public final class Phones {
     private Phones() {
     }
 
+    /**
+     * For a phone a form may leave empty (a supplier, a location, a staff member): empty means no
+     * phone, instead of an invalid one. Sign-up and sign-in keep {@link #normalize}, which refuses it.
+     */
+    public static String normalizeOptional(String phone) {
+        return phone == null || phone.isBlank() ? null : normalize(phone);
+    }
+
     public static String normalize(String phone) {
         if (phone == null) {
             return null;
