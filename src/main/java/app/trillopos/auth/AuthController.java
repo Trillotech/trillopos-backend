@@ -36,6 +36,11 @@ class AuthController {
     record LoginRequest(@NotBlank String phone, @NotBlank String password, @Size(max = 100) String deviceLabel) {
     }
 
+    record JoinRequest(@NotBlank @Size(max = 16) String code, @NotBlank String phone,
+            @NotBlank @Size(min = 8, max = 128) String password,
+            @NotBlank @Size(max = 200) String fullName, @Size(max = 100) String deviceLabel) {
+    }
+
     record RefreshRequest(@NotBlank String refreshToken) {
     }
 
@@ -86,6 +91,13 @@ class AuthController {
     @PostMapping("/login")
     LoginResult login(@Valid @RequestBody LoginRequest request) {
         return auth.login(request.phone(), request.password(), request.deviceLabel());
+    }
+
+    @PostMapping("/join")
+    @ResponseStatus(HttpStatus.CREATED)
+    IssuedTokens join(@Valid @RequestBody JoinRequest request) {
+        return auth.join(new AuthService.JoinCommand(request.code(), request.phone(), request.password(),
+                request.fullName(), request.deviceLabel()));
     }
 
     @PostMapping("/refresh")

@@ -52,7 +52,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers(HttpMethod.POST, "/auth/signup", "/auth/login", "/auth/refresh",
-                                "/auth/logout", "/auth/pin").permitAll()
+                                "/auth/logout", "/auth/pin", "/auth/join").permitAll()
                         .requestMatchers(HttpMethod.GET, "/auth/register/staff").permitAll()
                         .requestMatchers(HttpMethod.GET, "/.well-known/jwks.json", "/actuator/health",
                                 "/v3/api-docs", "/v3/api-docs/**").permitAll()

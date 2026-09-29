@@ -64,7 +64,8 @@ BASE=http://localhost:8080 scripts/vertical-slice.sh
 
 | Method | Path | Who |
 |---|---|---|
-| POST | `/auth/signup`, `/auth/login`, `/auth/refresh`, `/auth/logout` | anyone |
+| POST | `/auth/signup`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/join` (employee signup with invite code) | anyone |
+| GET | `/session` (current identity, role and location scope; includes account-less PIN staff) | tenant or register token |
 | GET | `/auth/memberships` · POST `/auth/switch` | picker or tenant token |
 | POST | `/auth/invitations/accept` (code) · `/auth/invitations/{id}/accept` | picker or tenant token |
 | GET/PATCH | `/organization` | tenant (PATCH: owner) |

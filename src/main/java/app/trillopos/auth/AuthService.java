@@ -58,6 +58,28 @@ public class AuthService {
     public record LoginResult(IssuedTokens tokens, List<PickerEntry> memberships) {
     }
 
+    public record JoinCommand(String code, String phone, String password, String fullName, String deviceLabel) {
+    }
+
+    /** Create only an employee account, accepting the owner's invitation atomically. */
+    public IssuedTokens join(JoinCommand command) {
+        Invite invite = codeInvitation(command.code());
+        String phone = Phones.normalize(command.phone());
+        return TenantContext.call(new TenantContext.Current(invite.organizationId(), null, null),
+                () -> transaction.execute(status -> {
+                    Membership membership = lockInvitation(invite.membershipId());
+                    if (accounts.existsByPhone(phone)) {
+                        throw ApiException.conflict("phone_in_use", "sign in to accept with an existing account");
+                    }
+                    Account account = accounts.save(new Account(phone, passwords.encode(command.password()),
+                            command.fullName()));
+                    membership.accept(account.getId(), clock.instant());
+                    membershipCheck.evict(membership.getId());
+                    return tokens.forMembership(account.getId(), snapshot(membership, invite.organizationId()),
+                            null, command.deviceLabel());
+                }));
+    }
+
     private final AccountRepository accounts;
     private final OrganizationRepository organizations;
     private final LocationRepository locations;
@@ -259,13 +281,18 @@ public class AuthService {
     /** Invite-by-code attaches the membership to whichever account enters the code (spec §12). */
     public PickerEntry acceptByCode(UUID accountId, String code) {
         UUID account = requireAccount(accountId);
+        Invite invite = codeInvitation(code);
+        return accept(account, invite.organizationId(), invite.membershipId());
+    }
+
+    private Invite codeInvitation(String code) {
         Invite invite = directory.findInviteByCodeHash(Secrets.sha256Hex(Secrets.normalizeInviteCode(code)))
                 .filter(i -> i.status() == MembershipStatus.INVITED)
                 .orElseThrow(() -> ApiException.notFound("invite_not_found", "no invitation with that code"));
         if (invite.expiresAt() != null && !invite.expiresAt().isAfter(clock.instant())) {
             throw ApiException.gone("invite_expired", "the invitation has expired");
         }
-        return accept(account, invite.organizationId(), invite.membershipId());
+        return invite;
     }
 
     /** Accept an invitation that reached the picker through a verified phone match. */
@@ -281,7 +308,7 @@ public class AuthService {
         return TenantContext.call(new TenantContext.Current(organizationId, membershipId, accountId),
                 () -> transaction.execute(status -> {
                     activeAccount(accountId);
-                    Membership membership = memberships.findById(membershipId).orElseThrow();
+                    Membership membership = lockInvitation(membershipId);
                     if (memberships.existsByAccountId(accountId) && !accountId.equals(membership.getAccountId())) {
                         throw ApiException.conflict("already_member", "this account is already a member");
                     }
@@ -291,6 +318,16 @@ public class AuthService {
                     return new PickerEntry(membershipId, organizationId, organization.getName(),
                             membership.getDisplayName(), membership.getRole(), membership.getStatus());
                 }));
+    }
+
+    private Membership lockInvitation(UUID id) {
+        Membership membership = memberships.lockById(id)
+                .filter(m -> m.getStatus() == MembershipStatus.INVITED && m.getArchivedAt() == null)
+                .orElseThrow(() -> ApiException.notFound("invite_not_found", "no invitation with that code"));
+        if (membership.getInviteExpiresAt() != null && !membership.getInviteExpiresAt().isAfter(clock.instant())) {
+            throw ApiException.gone("invite_expired", "the invitation has expired");
+        }
+        return membership;
     }
 
     private String uniqueSlug(SignupCommand command) {
