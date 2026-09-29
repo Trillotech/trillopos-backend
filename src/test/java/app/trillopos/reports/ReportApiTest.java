@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,7 +56,7 @@ class ReportApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.returnCount").value(1))
                 .andExpect(jsonPath("$.cogsReversed").value(600))
                 .andExpect(jsonPath("$.grossProfit").value(1057.14))
-                .andExpect(jsonPath("$.from").value(LocalDate.now().toString()));
+                .andExpect(jsonPath("$.from").value(LocalDate.now(ZoneId.of("Asia/Yangon")).toString()));
         api.call(get("/reports/sales-by-day"), owner.token())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].salesCount").value(1));

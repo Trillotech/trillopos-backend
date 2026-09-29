@@ -23,6 +23,10 @@ public class Category extends TenantEntity {
     @Column(name = "size_chart_id")
     private UUID sizeChartId;
 
+    /** The ready-made category ({@link CategoryLibrary}) this one was made from; null for the shop's own. */
+    @Column(name = "template_key", length = 40)
+    private String templateKey;
+
     protected Category() {
     }
 
@@ -53,5 +57,13 @@ public class Category extends TenantEntity {
 
     public void setSizeChartId(UUID sizeChartId) {
         this.sizeChartId = sizeChartId;
+    }
+
+    public String getTemplateKey() {
+        return templateKey;
+    }
+
+    public void setTemplateKey(String templateKey) {
+        this.templateKey = templateKey;
     }
 }
