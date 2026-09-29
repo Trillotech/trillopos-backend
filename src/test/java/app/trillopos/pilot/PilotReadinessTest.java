@@ -3,6 +3,7 @@ package app.trillopos.pilot;
 import static app.trillopos.support.Api.json;
 import static app.trillopos.support.Api.read;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -199,6 +200,38 @@ class PilotReadinessTest extends IntegrationTest {
                 .andExpect(jsonPath("$[0].outstandingAmount").value(50000));
         api.call(get("/stock-balances?productId=" + dress), owner.token())
                 .andExpect(jsonPath("$[0].quantity").value(2));
+    }
+
+    @Test
+    void deletingAProductWritesOffItsStockAndKeepsItsSales() throws Exception {
+        Owner owner = api.signup();
+        api.call(json(patch("/organization"), "{\"businessType\":\"ONLINE\",\"defaultTaxRate\":0}"), owner.token())
+                .andExpect(status().isOk());
+        String shoe = read(api.call(json(post("/products"), """
+                {"name":"Nike V2K Grey","unit":"PIECE","retailPrice":350000,
+                 "openingStock":[{"locationId":"%s","quantity":5,"unitCost":310000}]}"""
+                .formatted(owner.mainLocationId())), owner.token()), "$.id");
+        String sale = read(api.call(json(post("/sales/checkout"), """
+                {"idempotencyKey":"shoe-1","locationId":"%s","channel":"ONLINE",
+                 "lines":[{"productId":"%s","quantity":1}],"payments":[{"method":"KBZ_PAY"}]}"""
+                .formatted(owner.mainLocationId(), shoe)), owner.token())
+                .andExpect(status().isCreated()), "$.id");
+
+        // stock it still holds must not be stranded: refused unless written off with it
+        api.call(delete("/products/" + shoe), owner.token())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("product_has_stock"));
+        api.call(delete("/products/" + shoe + "?writeOffStock=true"), owner.token())
+                .andExpect(status().isNoContent());
+
+        api.call(get("/products"), owner.token())
+                .andExpect(jsonPath("$[?(@.id == '%s')]".formatted(shoe)).isEmpty());
+        api.call(get("/stock-balances?productId=" + shoe), owner.token())
+                .andExpect(jsonPath("$[0].quantity").value(0));
+        // its sale keeps it
+        api.call(get("/sales/" + sale), owner.token())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lines[0].productName").value("Nike V2K Grey"));
     }
 
     @Test

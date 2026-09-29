@@ -10,7 +10,13 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import app.trillopos.inventory.StockBalance;
+import app.trillopos.inventory.StockBalanceRepository;
 import app.trillopos.inventory.StockDocumentService;
+import app.trillopos.inventory.StockDocumentService.DocumentCommand;
+import app.trillopos.inventory.StockDocumentService.LineCommand;
+import app.trillopos.inventory.StockDocumentType;
+import app.trillopos.inventory.StockMovementReason;
 import app.trillopos.inventory.StockDocumentService.OpeningStock;
 import app.trillopos.org.BusinessType;
 import app.trillopos.org.LocationRepository;
@@ -38,13 +44,14 @@ public class ProductService {
     private final LocationRepository locations;
     private final LocationProductRepository locationProducts;
     private final StockDocumentService stockDocuments;
+    private final StockBalanceRepository balances;
     private final OrganizationRepository organizations;
     private final Clock clock;
 
     public ProductService(ProductRepository products, ProductBarcodeRepository barcodes,
             CategoryRepository categories, SupplierRepository suppliers, LocationRepository locations,
             LocationProductRepository locationProducts, StockDocumentService stockDocuments,
-            OrganizationRepository organizations, Clock clock) {
+            StockBalanceRepository balances, OrganizationRepository organizations, Clock clock) {
         this.products = products;
         this.barcodes = barcodes;
         this.categories = categories;
@@ -52,6 +59,7 @@ public class ProductService {
         this.locations = locations;
         this.locationProducts = locationProducts;
         this.stockDocuments = stockDocuments;
+        this.balances = balances;
         this.organizations = organizations;
         this.clock = clock;
     }
@@ -117,9 +125,33 @@ public class ProductService {
         return product;
     }
 
+    /**
+     * Deleting a product archives it: it leaves the catalog and the sale screen, while past sales,
+     * stock history and reports keep it. An archived product takes no more stock documents, so stock
+     * it still held would stay in the stock value for good. With {@code writeOffStock} that stock is
+     * posted out first (a STOCK_OUT per location, in this transaction); without it the delete is refused.
+     */
     @Transactional
-    public void archive(UUID id) {
-        find(id).archive(clock.instant());
+    public void archive(UUID id, boolean writeOffStock) {
+        Product product = find(id);
+        List<StockBalance> held = balances.findAllByProductIdOrderByLocationId(id).stream()
+                .filter(balance -> balance.getQuantity().signum() != 0)
+                .toList();
+        if (held.stream().anyMatch(balance -> balance.getQuantity().signum() < 0)) {
+            throw ApiException.conflict("product_stock_negative",
+                    product.getName() + " has negative stock; correct the count before deleting it");
+        }
+        if (!held.isEmpty() && !writeOffStock) {
+            BigDecimal quantity = held.stream().map(StockBalance::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+            throw ApiException.conflict("product_has_stock",
+                    product.getName() + " still has " + quantity.stripTrailingZeros().toPlainString() + " in stock");
+        }
+        for (StockBalance balance : held) {
+            stockDocuments.createAndPost(new DocumentCommand(StockDocumentType.STOCK_OUT, balance.getLocationId(),
+                    null, null, null, "Written off: product deleted",
+                    List.of(new LineCommand(id, balance.getQuantity(), null, StockMovementReason.COUNT_CORRECTION))));
+        }
+        product.archive(clock.instant());
     }
 
     @Transactional
