@@ -200,7 +200,7 @@ public class ReturnService {
         for (SaleReturnLine line : lines) {
             saved.add(returnLines.save(line));
         }
-        if (command.refundMethod() == PaymentMethod.CREDIT) {
+        if (command.refundMethod() == PaymentMethod.CREDIT && refund.signum() > 0) {
             settleAgainstReceivable(sale, refund, store.getId(), number, returnedAt);
         }
         boolean everything = sold.values().stream().allMatch(l -> runningReturned

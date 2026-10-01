@@ -57,6 +57,30 @@ public class Product extends TenantEntity {
     @Column(name = "wholesale_price", precision = 19, scale = 4)
     private BigDecimal wholesalePrice;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "discount_type", length = 32)
+    private ProductDiscount.Type discountType;
+
+    @Column(name = "discount_value", precision = 19, scale = 4)
+    private BigDecimal discountValue;
+
+    @Column(name = "discount_enabled", nullable = false)
+    private boolean discountEnabled;
+
+    @Column(name = "discount_include_wholesale", nullable = false)
+    private boolean discountIncludeWholesale;
+
+    public ProductDiscount getDiscount() {
+        return new ProductDiscount(discountType, discountValue, discountEnabled, discountIncludeWholesale);
+    }
+
+    public void setDiscount(ProductDiscount discount) {
+        discountType = discount.type();
+        discountValue = discount.value();
+        discountEnabled = discount.enabled();
+        discountIncludeWholesale = discount.includeWholesale();
+    }
+
     @Column(name = "taxable", nullable = false)
     private boolean taxable = true;
 

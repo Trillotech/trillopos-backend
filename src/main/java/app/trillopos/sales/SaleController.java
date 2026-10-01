@@ -62,12 +62,12 @@ class SaleController {
     record CartRequest(@NotNull UUID locationId, @NotNull SaleChannel channel, UUID cashierShiftId,
             PriceType priceType, BigDecimal cartDiscountAmount,
             @NotEmpty @Size(max = SaleService.MAX_LINES) List<@Valid LineRequest> lines, Boolean hold,
-            UUID customerId) {
+            @Size(max = 64) String pricingFingerprint, UUID customerId) {
 
         CartCommand command() {
             return new CartCommand(locationId, channel, cashierShiftId, priceType, cartDiscountAmount,
                     lines.stream().map(l -> new LineCommand(l.productId(), l.quantity(), l.discountAmount())).toList(),
-                    customerId);
+                    customerId, pricingFingerprint);
         }
 
         boolean holdNow() {
@@ -78,12 +78,12 @@ class SaleController {
     record CheckoutRequest(@NotBlank @Size(max = 100) String idempotencyKey, @NotNull UUID locationId,
             @NotNull SaleChannel channel, UUID cashierShiftId, PriceType priceType, BigDecimal cartDiscountAmount,
             @NotEmpty @Size(max = SaleService.MAX_LINES) List<@Valid LineRequest> lines,
-            @NotEmpty List<@Valid PaymentRequest> payments, UUID customerId) {
+            @NotEmpty List<@Valid PaymentRequest> payments, UUID customerId, @Size(max = 64) String pricingFingerprint) {
 
         CartCommand cart() {
             return new CartCommand(locationId, channel, cashierShiftId, priceType, cartDiscountAmount,
                     lines.stream().map(l -> new LineCommand(l.productId(), l.quantity(), l.discountAmount())).toList(),
-                    customerId);
+                    customerId, pricingFingerprint);
         }
     }
 
@@ -172,6 +172,11 @@ class SaleController {
         return sales.search(new SaleQuery(status == null ? Set.of() : EnumSet.copyOf(status), locationId, customerId,
                 start.atStartOfDay(zone).toInstant(), end.plusDays(1).atStartOfDay(zone).toInstant(), limit))
                 .stream().map(SaleSummaryView::of).toList();
+    }
+
+    @PostMapping("/preview")
+    SaleService.PricePreview preview(@Valid @RequestBody CartRequest request) {
+        return sales.preview(request.command());
     }
 
     /** Complete a basket in one call. A repeat of the same key returns the original with 200. */

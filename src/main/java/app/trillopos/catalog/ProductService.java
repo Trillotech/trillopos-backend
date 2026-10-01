@@ -37,7 +37,17 @@ public class ProductService {
             ProductUnit unit, String sizeLabel, String productGroupKey, BigDecimal retailPrice,
             BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory, Integer reorderPoint,
             Boolean sellInPos, Boolean sellOnline, Boolean active, List<String> barcodes,
+            List<OpeningStock> openingStock, String sizeEquivalents, ProductDiscount discount) {
+
+        public ProductCommand(UUID id, String sku, String name, UUID categoryId, UUID defaultSupplierId,
+            ProductUnit unit, String sizeLabel, String productGroupKey, BigDecimal retailPrice,
+            BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory, Integer reorderPoint,
+            Boolean sellInPos, Boolean sellOnline, Boolean active, List<String> barcodes,
             List<OpeningStock> openingStock, String sizeEquivalents) {
+            this(id, sku, name, categoryId, defaultSupplierId, unit, sizeLabel, productGroupKey, retailPrice,
+                    wholesalePrice, taxable, trackInventory, reorderPoint, sellInPos, sellOnline, active, barcodes,
+                    openingStock, sizeEquivalents, null);
+        }
 
         /** A product without size equivalents. */
         public ProductCommand(UUID id, String sku, String name, UUID categoryId, UUID defaultSupplierId,
@@ -59,7 +69,14 @@ public class ProductService {
     public record SizesCommand(String name, UUID categoryId, UUID defaultSupplierId, ProductUnit unit,
             BigDecimal retailPrice, BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory,
             Integer reorderPoint, Boolean sellInPos, Boolean sellOnline, Boolean active, UUID sizeChartId,
+            UUID locationId, BigDecimal unitCost, List<SizeCommand> sizes, ProductDiscount discount) {
+        public SizesCommand(String name, UUID categoryId, UUID defaultSupplierId, ProductUnit unit,
+            BigDecimal retailPrice, BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory,
+            Integer reorderPoint, Boolean sellInPos, Boolean sellOnline, Boolean active, UUID sizeChartId,
             UUID locationId, BigDecimal unitCost, List<SizeCommand> sizes) {
+            this(name, categoryId, defaultSupplierId, unit, retailPrice, wholesalePrice, taxable, trackInventory,
+                    reorderPoint, sellInPos, sellOnline, active, sizeChartId, locationId, unitCost, sizes, null);
+        }
     }
 
     public record SizeCommand(String label, BigDecimal quantity) {
@@ -193,7 +210,7 @@ public class ProductService {
                     model + " · " + chart.display(label), command.categoryId(), command.defaultSupplierId(),
                     command.unit(), label, groupKey, command.retailPrice(), command.wholesalePrice(),
                     command.taxable(), command.trackInventory(), command.reorderPoint(), command.sellInPos(),
-                    command.sellOnline(), command.active(), null, null, chart.equivalents(row)));
+                    command.sellOnline(), command.active(), null, null, chart.equivalents(row), command.discount()));
             product.setSizeChartId(chart.getId());
             created.add(product);
             if (quantities.get(label) != null) {
@@ -291,6 +308,9 @@ public class ProductService {
     }
 
     private void apply(Product product, ProductCommand command) {
+        if (command.discount() != null) {
+            product.setDiscount(command.discount());
+        }
         if (command.categoryId() != null) {
             product.setCategoryId(category(command.categoryId()).getId());
         }
