@@ -38,7 +38,7 @@ class ProductController {
     record ProductView(UUID id, String sku, String name, UUID categoryId, UUID defaultSupplierId, ProductUnit unit,
             String sizeLabel, String sizeEquivalents, String productGroupKey, UUID sizeChartId,
             BigDecimal retailPrice, BigDecimal wholesalePrice, boolean taxable, boolean trackInventory,
-            int reorderPoint, boolean sellInPos, boolean sellOnline, boolean active, List<String> barcodes) {
+            int reorderPoint, boolean sellInPos, boolean sellOnline, boolean active, List<String> barcodes, ProductDiscount discount) {
     }
 
     record OpeningStockWrite(@NotNull UUID locationId, @NotNull BigDecimal quantity, BigDecimal unitCost) {
@@ -54,14 +54,14 @@ class ProductController {
             @DecimalMin("0") BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory,
             @Min(0) Integer reorderPoint, Boolean sellInPos, Boolean sellOnline, Boolean active,
             List<String> barcodes, List<@Valid OpeningStockWrite> openingStock,
-            @Size(max = 255) String sizeEquivalents) {
+            @Size(max = 255) String sizeEquivalents, ProductDiscount discount) {
 
         ProductCommand command() {
             return new ProductCommand(id, sku, name, categoryId, defaultSupplierId, unit, sizeLabel, productGroupKey,
                     retailPrice, wholesalePrice, taxable, trackInventory, reorderPoint, sellInPos, sellOnline, active,
                     barcodes, openingStock == null ? null : openingStock.stream()
                             .map(o -> new OpeningStock(o.locationId(), o.quantity(), o.unitCost())).toList(),
-                    sizeEquivalents);
+                    sizeEquivalents, discount);
         }
     }
 
@@ -77,12 +77,12 @@ class ProductController {
             @DecimalMin("0") BigDecimal wholesalePrice, Boolean taxable, Boolean trackInventory,
             @Min(0) Integer reorderPoint, Boolean sellInPos, Boolean sellOnline, Boolean active,
             @NotNull UUID sizeChartId, UUID locationId, @DecimalMin("0") BigDecimal unitCost,
-            @NotEmpty @Size(max = SizeChart.MAX_ROWS) List<@Valid SizeWrite> sizes) {
+            @NotEmpty @Size(max = SizeChart.MAX_ROWS) List<@Valid SizeWrite> sizes, ProductDiscount discount) {
 
         SizesCommand command() {
             return new SizesCommand(name, categoryId, defaultSupplierId, unit, retailPrice, wholesalePrice, taxable,
                     trackInventory, reorderPoint, sellInPos, sellOnline, active, sizeChartId, locationId, unitCost,
-                    sizes.stream().map(s -> new SizeCommand(s.label(), s.quantity())).toList());
+                    sizes.stream().map(s -> new SizeCommand(s.label(), s.quantity())).toList(), discount);
         }
     }
 
@@ -168,6 +168,6 @@ class ProductController {
         return new ProductView(p.getId(), p.getSku(), p.getName(), p.getCategoryId(), p.getDefaultSupplierId(),
                 p.getUnit(), p.getSizeLabel(), p.getSizeEquivalents(), p.getProductGroupKey(), p.getSizeChartId(),
                 p.getRetailPrice(), p.getWholesalePrice(), p.isTaxable(), p.isTrackInventory(), p.getReorderPoint(),
-                p.isSellInPos(), p.isSellOnline(), p.isActive(), codes);
+                p.isSellInPos(), p.isSellOnline(), p.isActive(), codes, p.getDiscount());
     }
 }

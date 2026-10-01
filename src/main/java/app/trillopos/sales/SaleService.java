@@ -74,7 +74,12 @@ public class SaleService {
 
     /** {@code customerId} null is a walk-in; {@code priceType} null takes the customer's, else RETAIL. */
     public record CartCommand(UUID locationId, SaleChannel channel, UUID cashierShiftId, PriceType priceType,
-            BigDecimal cartDiscountAmount, List<LineCommand> lines, UUID customerId) {
+            BigDecimal cartDiscountAmount, List<LineCommand> lines, UUID customerId, String pricingFingerprint) {
+
+        public CartCommand(UUID locationId, SaleChannel channel, UUID cashierShiftId, PriceType priceType,
+                BigDecimal cartDiscountAmount, List<LineCommand> lines, UUID customerId) {
+            this(locationId, channel, cashierShiftId, priceType, cartDiscountAmount, lines, customerId, null);
+        }
 
         public CartCommand(UUID locationId, SaleChannel channel, UUID cashierShiftId, PriceType priceType,
                 BigDecimal cartDiscountAmount, List<LineCommand> lines) {
@@ -95,6 +100,27 @@ public class SaleService {
 
     /** One row of the sales log or the held-cart list: no lines, no payments. */
     public record SaleSummary(Sale sale, String customerName, long lineCount) {
+    }
+
+    public record PricePreview(List<PricedLine> lines, SaleCalculator.Totals totals, String pricingFingerprint) {}
+
+    /** Read-only calculation: no sale, payment, receipt number or stock movement is written. */
+    @Transactional(readOnly = true)
+    public PricePreview preview(CartCommand cart) {
+        validateCartHeader(cart, false);
+        Organization org = organization();
+        Priced priced = price(cart, priceType(cart), sellable(cart), org, minorDigits(org));
+        return new PricePreview(priced.lines(), priced.totals(), fingerprint(priced));
+    }
+
+    private static String fingerprint(Priced priced) {
+        try {
+            byte[] bytes = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(priced.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(bytes);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     /**
@@ -221,7 +247,13 @@ public class SaleService {
         if (!sale.isOpenCart()) {
             throw ApiException.conflict("sale_not_open", "the sale is " + sale.getStatus());
         }
-        List<LineCommand> cartLines = lines.findAllBySaleIdOrderByPosition(saleId).stream()
+        List<SaleLine> savedLines = lines.findAllBySaleIdOrderByPosition(saleId);
+        Priced savedPrice = new Priced(savedLines.stream().map(l -> new PricedLine(l.getProductId(),
+                l.getProductName(), l.getSku(), l.getQuantity(), l.getUnitPrice(), l.getDiscountAmount(),
+                l.getCartDiscountAllocated(), l.getTaxRate(), l.getTaxAmount(), l.getLineTotal())).toList(),
+                new SaleCalculator.Totals(sale.getSubtotal(), sale.getLineDiscountTotal(),
+                        sale.getCartDiscountAmount(), sale.getTaxAmount(), sale.getRoundingAdjustment(), sale.getTotal()));
+        List<LineCommand> cartLines = savedLines.stream()
                 .map(l -> new LineCommand(l.getProductId(), l.getQuantity(), l.getDiscountAmount()))
                 .toList();
         CartCommand cart = new CartCommand(sale.getLocationId(), sale.getChannel(), sale.getCashierShiftId(),
@@ -229,18 +261,23 @@ public class SaleService {
         Organization organization = organization();
         validateCartHeader(cart, true);
         sale.reviseCart(cart.channel(), cart.cashierShiftId(), cart.customerId(), cart.priceType(),
-                organization.isTaxInclusivePricing());
+                sale.isTaxInclusive());
         sale.claimIdempotencyKey(idempotencyKey);
         sales.saveAndFlush(sale);
         lines.deleteAllOfSale(saleId);
-        return new CompletionResult(complete(sale, cart, tenders, organization), false);
+        return new CompletionResult(complete(sale, cart, tenders, organization, savedPrice), false);
     }
 
     private SaleDetails complete(Sale sale, CartCommand cart, List<PaymentCommand> tenders,
             Organization organization) {
+        return complete(sale, cart, tenders, organization, null);
+    }
+
+    private SaleDetails complete(Sale sale, CartCommand cart, List<PaymentCommand> tenders,
+            Organization organization, Priced savedPrice) {
         int minor = minorDigits(organization);
         Map<UUID, Product> catalog = sellable(cart);
-        Priced priced = price(cart, priceType(cart), catalog, organization, minor);
+        Priced priced = savedPrice != null ? savedPrice : price(cart, priceType(cart), catalog, organization, minor);
         List<PaymentCommand> validTenders = validatePayments(tenders, priced.totals().total(), minor,
                 cart.customerId() != null);
 
@@ -376,7 +413,7 @@ public class SaleService {
         sale.applyTotals(priced.totals());
         List<SaleLine> saved = new ArrayList<>();
         for (int i = 0; i < priced.lines().size(); i++) {
-            // provisional: completion re-prices and snapshots the real unit cost
+            // held prices are honored; completion snapshots the real unit cost
             saved.add(lines.save(new SaleLine(sale.getId(), i + 1, priced.lines().get(i), BigDecimal.ZERO)));
         }
         return saved;
@@ -450,11 +487,22 @@ public class SaleService {
                     ? p.getWholesalePrice()
                     : p.getRetailPrice();
             BigDecimal rate = p.isTaxable() ? organization.getDefaultTaxRate() : BigDecimal.ZERO;
+            BigDecimal discount = line.discountAmount();
+            if (p.getDiscount().applies(priceType == PriceType.WHOLESALE)) {
+                if (discount != null && discount.signum() != 0) {
+                    throw ApiException.badRequest("discount_conflict", "a manual line discount cannot be combined with an automatic product discount");
+                }
+                discount = p.getDiscount().amount(unitPrice, line.quantity(), minor);
+            }
             return new LineInput(p.getId(), p.getName(), p.getSku(), line.quantity(), unitPrice,
-                    line.discountAmount(), rate);
+                    discount, rate);
         }).toList();
-        return SaleCalculator.price(inputs, cart.cartDiscountAmount(), organization.isTaxInclusivePricing(), minor,
+        Priced priced = SaleCalculator.price(inputs, cart.cartDiscountAmount(), organization.isTaxInclusivePricing(), minor,
                 organization.getRoundTotalToNearest());
+        if (cart.pricingFingerprint() != null && !cart.pricingFingerprint().equals(fingerprint(priced))) {
+            throw ApiException.conflict("pricing_changed", "prices changed; review the updated total before continuing");
+        }
+        return priced;
     }
 
     /**
@@ -466,6 +514,14 @@ public class SaleService {
             boolean hasCustomer) {
         if (tenders == null || tenders.isEmpty()) {
             throw ApiException.badRequest("payment_required", "a completed sale is paid");
+        }
+        // A fully discounted sale still posts stock, but has no money movement or receivable.
+        if (total.signum() == 0 && tenders.size() == 1) {
+            PaymentCommand tender = tenders.getFirst();
+            if ((tender.amount() == null || tender.amount().signum() == 0)
+                    && (tender.tenderedAmount() == null || tender.tenderedAmount().signum() == 0)) {
+                return List.of();
+            }
         }
         // a single payment without an amount pays the whole total: the sale screen shows the total
         // only on the receipt, and nobody should have to add it up by hand
