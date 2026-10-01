@@ -45,6 +45,12 @@ public class SaleReturn extends TenantEntity {
     @Column(name = "refund_amount", nullable = false, precision = 19, scale = 4)
     private BigDecimal refundAmount;
 
+    @Column(name = "credit_refund_amount", nullable = false, precision = 19, scale = 4)
+    private BigDecimal creditRefundAmount;
+
+    @Column(name = "rounding_refund_amount", nullable = false, precision = 19, scale = 4)
+    private BigDecimal roundingRefundAmount;
+
     @Column(name = "tax_amount", nullable = false, precision = 19, scale = 4)
     private BigDecimal taxAmount;
 
@@ -66,7 +72,7 @@ public class SaleReturn extends TenantEntity {
     /** {@code id} is pre-assigned so the movements and lines can reference it before the header is saved. */
     SaleReturn(UUID id, UUID originalSaleId, UUID locationId, UUID cashierShiftId, String returnNumber,
             PaymentMethod refundMethod, BigDecimal refundAmount, BigDecimal taxAmount, String referenceNo,
-            String reason, Instant returnedAt, String idempotencyKey) {
+            String reason, Instant returnedAt, String idempotencyKey, BigDecimal creditRefundAmount, BigDecimal roundingRefundAmount) {
         assignId(id);
         this.originalSaleId = originalSaleId;
         this.locationId = locationId;
@@ -74,6 +80,8 @@ public class SaleReturn extends TenantEntity {
         this.returnNumber = returnNumber;
         this.refundMethod = refundMethod;
         this.refundAmount = refundAmount;
+        this.creditRefundAmount = creditRefundAmount;
+        this.roundingRefundAmount = roundingRefundAmount;
         this.taxAmount = taxAmount;
         this.referenceNo = referenceNo;
         this.reason = reason;
@@ -104,6 +112,9 @@ public class SaleReturn extends TenantEntity {
     public BigDecimal getRefundAmount() {
         return refundAmount;
     }
+
+    public BigDecimal getCreditRefundAmount() { return creditRefundAmount; }
+    public BigDecimal getRoundingRefundAmount() { return roundingRefundAmount; }
 
     public BigDecimal getTaxAmount() {
         return taxAmount;

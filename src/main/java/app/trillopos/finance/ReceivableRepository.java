@@ -24,6 +24,10 @@ public interface ReceivableRepository extends JpaRepository<Receivable, UUID> {
 
     Optional<Receivable> findBySourceTypeAndSourceId(ReceivableSourceType sourceType, UUID sourceId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from Receivable r where r.sourceType = app.trillopos.finance.ReceivableSourceType.SALE and r.sourceId = :sale")
+    Optional<Receivable> lockForSale(@Param("sale") UUID saleId);
+
     /** Σ outstanding for one customer: what a credit limit is checked against. */
     @Query("select coalesce(sum(r.outstandingAmount), 0) from Receivable r where r.customerId = :customer")
     BigDecimal outstandingFor(@Param("customer") UUID customerId);
