@@ -50,6 +50,10 @@ public class Sale extends TenantEntity {
     private SaleStatus status;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "progress", nullable = false, length = 32)
+    private SaleProgress progress = SaleProgress.CLOSED;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "price_type", nullable = false, length = 32)
     private PriceType priceType;
 
@@ -141,6 +145,7 @@ public class Sale extends TenantEntity {
         this.paidAmount = paidAmount;
         this.dueAmount = total.subtract(paidAmount);
         this.status = SaleStatus.COMPLETED;
+        this.progress = channel == SaleChannel.ONLINE ? SaleProgress.OPEN : SaleProgress.CLOSED;
     }
 
     /** A return moves a completed sale to PARTIALLY_REFUNDED, or REFUNDED once every unit is back (spec §6). */
@@ -205,6 +210,10 @@ public class Sale extends TenantEntity {
     public SaleStatus getStatus() {
         return status;
     }
+
+    public SaleProgress getProgress() { return progress; }
+
+    void setProgress(SaleProgress progress) { this.progress = progress; }
 
     public PriceType getPriceType() {
         return priceType;

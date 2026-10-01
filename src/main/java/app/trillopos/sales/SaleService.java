@@ -129,7 +129,10 @@ public class SaleService {
      * sale's {@code soldAt}).
      */
     public record SaleQuery(Set<SaleStatus> statuses, UUID locationId, UUID customerId, Instant from, Instant to,
-            int limit) {
+            int limit, SaleProgress progress, SalePaymentStatus paymentStatus) {
+        public SaleQuery(Set<SaleStatus> statuses, UUID locationId, UUID customerId, Instant from, Instant to, int limit) {
+            this(statuses, locationId, customerId, from, to, limit, null, null);
+        }
     }
 
     private final SaleRepository sales;
@@ -144,11 +147,12 @@ public class SaleService {
     private final CustomerRepository customers;
     private final ReceivableService receivables;
     private final Clock clock;
+    private final SalePaymentService paymentStates;
 
     public SaleService(SaleRepository sales, SaleLineRepository lines, PaymentRepository payments,
             CashierShiftRepository shifts, ShiftService shiftService, ProductRepository products,
             OrganizationRepository organizations, StockLedger ledger, DocumentNumbers numbers,
-            CustomerRepository customers, ReceivableService receivables, Clock clock) {
+            CustomerRepository customers, ReceivableService receivables, Clock clock, SalePaymentService paymentStates) {
         this.sales = sales;
         this.lines = lines;
         this.payments = payments;
@@ -161,6 +165,7 @@ public class SaleService {
         this.customers = customers;
         this.receivables = receivables;
         this.clock = clock;
+        this.paymentStates = paymentStates;
     }
 
     // ───────────────────────────────────────────────────────────── parked carts
@@ -332,17 +337,25 @@ public class SaleService {
      * The sales log and the held-cart list (newest first). A session scoped to one location only
      * ever sees that location, whatever the query asks for.
      */
+    @Transactional(readOnly = true)
     public List<SaleSummary> search(SaleQuery query) {
         UUID scope = TenantContext.current().map(TenantContext.Current::locationScope).orElse(null);
         UUID locationId = scope != null ? scope : query.locationId();
         if (scope != null && query.locationId() != null) {
             TenantContext.requireLocationInScope(query.locationId());
         }
+        List<UUID> matchingPayments = query.paymentStatus() == null ? null : paymentStates.matching(query, locationId);
+        if (matchingPayments != null && matchingPayments.isEmpty()) return List.of();
         Specification<Sale> where = (root, criteria, builder) -> {
             List<Predicate> predicates = new ArrayList<>();
             if (query.statuses() != null && !query.statuses().isEmpty()) {
                 predicates.add(root.get("status").in(query.statuses()));
             }
+            if (query.progress() != null) {
+                predicates.add(builder.equal(root.get("progress"), query.progress()));
+                predicates.add(root.get("status").in(SaleStatus.COMPLETED, SaleStatus.PARTIALLY_REFUNDED, SaleStatus.REFUNDED));
+            }
+            if (matchingPayments != null) predicates.add(root.get("id").in(matchingPayments));
             if (locationId != null) {
                 predicates.add(builder.equal(root.get("locationId"), locationId));
             }

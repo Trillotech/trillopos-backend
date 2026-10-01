@@ -107,9 +107,10 @@ class SaleController {
             BigDecimal subtotal,
             BigDecimal lineDiscountTotal, BigDecimal cartDiscountAmount, BigDecimal taxAmount,
             BigDecimal roundingAdjustment, BigDecimal total, BigDecimal paidAmount, BigDecimal dueAmount,
-            Instant soldAt, List<LineView> lines, List<PaymentView> payments) {
+            Instant soldAt, List<LineView> lines, List<PaymentView> payments, SaleProgress progress,
+            SalePaymentService.SalePaymentState paymentState) {
 
-        static SaleView of(SaleDetails d, String customerName, boolean seesCost) {
+        static SaleView of(SaleDetails d, String customerName, boolean seesCost, SalePaymentService.SalePaymentState paymentState) {
             Sale s = d.sale();
             boolean costKnown = seesCost && !s.isOpenCart() && s.getStatus() != SaleStatus.VOID;
             return new SaleView(s.getId(), s.getReceiptNumber(), s.getStatus(), s.getChannel(), s.getLocationId(),
@@ -123,21 +124,22 @@ class SaleController {
                             l.getCartDiscountAllocated(), l.getTaxRate(), l.getTaxAmount(), l.getLineTotal(),
                             costKnown ? l.getUnitCost() : null)).toList(),
                     d.payments().stream().map(p -> new PaymentView(p.getMethod(), p.getAmount(),
-                            p.getTenderedAmount(), p.getChangeAmount(), p.getReferenceNo())).toList());
+                            p.getTenderedAmount(), p.getChangeAmount(), p.getReferenceNo())).toList(), s.getProgress(), paymentState);
         }
     }
 
     /** A row of the sales log or the held-cart list: totals only, no lines or payments. */
     record SaleSummaryView(UUID id, String receiptNumber, SaleStatus status, SaleChannel channel, UUID locationId,
             UUID cashierShiftId, UUID customerId, String customerName, PriceType priceType, BigDecimal total,
-            BigDecimal paidAmount, long lineCount, Instant soldAt, Instant createdAt) {
+            BigDecimal paidAmount, long lineCount, Instant soldAt, Instant createdAt, SaleProgress progress,
+            SalePaymentService.SalePaymentState paymentState) {
 
-        static SaleSummaryView of(SaleSummary summary) {
+        static SaleSummaryView of(SaleSummary summary, SalePaymentService.SalePaymentState paymentState) {
             Sale s = summary.sale();
             return new SaleSummaryView(s.getId(), s.getReceiptNumber(), s.getStatus(), s.getChannel(),
                     s.getLocationId(), s.getCashierShiftId(), s.getCustomerId(), summary.customerName(),
                     s.getPriceType(), s.getTotal(), s.getPaidAmount(), summary.lineCount(), s.getSoldAt(),
-                    s.getCreatedAt());
+                    s.getCreatedAt(), s.getProgress(), paymentState);
         }
     }
 
@@ -145,12 +147,14 @@ class SaleController {
     private final SaleCheckout checkout;
     private final OrganizationRepository organizations;
     private final Clock clock;
+    private final SalePaymentService paymentStates;
 
-    SaleController(SaleService sales, SaleCheckout checkout, OrganizationRepository organizations, Clock clock) {
+    SaleController(SaleService sales, SaleCheckout checkout, OrganizationRepository organizations, Clock clock, SalePaymentService paymentStates) {
         this.sales = sales;
         this.checkout = checkout;
         this.organizations = organizations;
         this.clock = clock;
+        this.paymentStates = paymentStates;
     }
 
     /**
@@ -160,18 +164,22 @@ class SaleController {
      * with neither, the last 30 days.
      */
     @GetMapping
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     List<SaleSummaryView> list(@RequestParam(required = false) List<SaleStatus> status,
             @RequestParam(required = false) UUID locationId, @RequestParam(required = false) UUID customerId,
             @RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to,
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(defaultValue = "100") int limit,
+            @RequestParam(required = false) SaleProgress progress,
+            @RequestParam(required = false) SalePaymentStatus paymentStatus) {
         ZoneId zone = ZoneId.of(organizations.findById(TenantContext.requireOrganizationId()).orElseThrow()
                 .getTimezone());
         LocalDate today = LocalDate.now(clock.withZone(zone));
         LocalDate start = from != null ? from : today.minusDays(30);
         LocalDate end = to != null ? to : today;
-        return sales.search(new SaleQuery(status == null ? Set.of() : EnumSet.copyOf(status), locationId, customerId,
-                start.atStartOfDay(zone).toInstant(), end.plusDays(1).atStartOfDay(zone).toInstant(), limit))
-                .stream().map(SaleSummaryView::of).toList();
+        List<SaleSummary> found = sales.search(new SaleQuery(status == null || status.isEmpty() ? Set.of() : EnumSet.copyOf(status), locationId, customerId,
+                start.atStartOfDay(zone).toInstant(), end.plusDays(1).atStartOfDay(zone).toInstant(), limit, progress, paymentStatus));
+        var states = paymentStates.forSales(found.stream().map(row -> row.sale().getId()).toList());
+        return found.stream().map(row -> SaleSummaryView.of(row, row.sale().tookMoney() ? states.get(row.sale().getId()) : null)).toList();
     }
 
     @PostMapping("/preview")
@@ -223,7 +231,8 @@ class SaleController {
     }
 
     private SaleView view(SaleDetails details, Authentication auth) {
-        return SaleView.of(details, sales.customerNameOf(details.sale()), seesCost(auth));
+        return SaleView.of(details, sales.customerNameOf(details.sale()), seesCost(auth),
+                details.sale().tookMoney() ? paymentStates.forSale(details.sale().getId()) : null);
     }
 
     private static List<PaymentCommand> payments(List<PaymentRequest> requests) {

@@ -59,7 +59,7 @@ class ReturnController {
 
     record ReturnView(UUID id, String returnNumber, UUID saleId, UUID locationId, UUID cashierShiftId,
             PaymentMethod refundMethod, BigDecimal refundAmount, BigDecimal taxAmount, String referenceNo,
-            String reason, Instant returnedAt, List<LineView> lines) {
+            String reason, Instant returnedAt, List<LineView> lines, BigDecimal creditRefundAmount, BigDecimal roundingRefundAmount) {
 
         static ReturnView of(ReturnDetails d, boolean seesCost) {
             SaleReturn r = d.saleReturn();
@@ -69,7 +69,7 @@ class ReturnController {
                             .map(l -> new LineView(l.getId(), l.getSaleLineId(), l.getProductId(), l.getQuantity(),
                                     l.getRefundAmount(), l.getTaxAmount(), l.isRestock(),
                                     seesCost ? l.getUnitCost() : null))
-                            .toList());
+                            .toList(), r.getCreditRefundAmount(), r.getRoundingRefundAmount());
         }
     }
 

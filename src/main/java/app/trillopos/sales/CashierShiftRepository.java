@@ -50,7 +50,7 @@ public interface CashierShiftRepository extends JpaRepository<CashierShift, UUID
 
     /** CASH refunded to customers out of this drawer. */
     @Query("""
-            select coalesce(sum(r.refundAmount), 0) from SaleReturn r
+            select coalesce(sum(r.refundAmount - r.creditRefundAmount), 0) from SaleReturn r
             where r.cashierShiftId = :shift and r.refundMethod = app.trillopos.sales.PaymentMethod.CASH""")
     BigDecimal cashRefunded(@Param("shift") UUID shiftId);
 

@@ -49,7 +49,11 @@ public class ReturnService {
     }
 
     public record ReturnCommand(UUID saleId, UUID locationId, UUID cashierShiftId, PaymentMethod refundMethod,
-            String referenceNo, String reason, List<LineCommand> lines, String idempotencyKey) {
+            String referenceNo, String reason, List<LineCommand> lines, String idempotencyKey, BigDecimal creditRefundAmount) {
+        public ReturnCommand(UUID saleId, UUID locationId, UUID cashierShiftId, PaymentMethod refundMethod,
+                String referenceNo, String reason, List<LineCommand> lines, String idempotencyKey) {
+            this(saleId, locationId, cashierShiftId, refundMethod, referenceNo, reason, lines, idempotencyKey, null);
+        }
     }
 
     public record ReturnDetails(SaleReturn saleReturn, List<SaleReturnLine> lines) {
@@ -70,11 +74,15 @@ public class ReturnService {
     private final StockLedger ledger;
     private final DocumentNumbers numbers;
     private final Clock clock;
+    private final app.trillopos.finance.ReceivableRepository receivableRows;
+    private final SalePaymentService paymentStates;
+    private final SaleProgressEventRepository progressEvents;
 
     public ReturnService(SaleRepository sales, SaleLineRepository saleLines, SaleReturnRepository returns,
             SaleReturnLineRepository returnLines, ProductRepository products, OrganizationRepository organizations,
             ShiftService shiftService, ReceivableService receivables, StockLedger ledger, DocumentNumbers numbers,
-            Clock clock) {
+            Clock clock, app.trillopos.finance.ReceivableRepository receivableRows,
+            SalePaymentService paymentStates, SaleProgressEventRepository progressEvents) {
         this.sales = sales;
         this.saleLines = saleLines;
         this.returns = returns;
@@ -86,6 +94,9 @@ public class ReturnService {
         this.ledger = ledger;
         this.numbers = numbers;
         this.clock = clock;
+        this.receivableRows = receivableRows;
+        this.paymentStates = paymentStates;
+        this.progressEvents = progressEvents;
     }
 
     @Transactional
@@ -110,6 +121,9 @@ public class ReturnService {
         if (sale.getStatus() == SaleStatus.REFUNDED) {
             throw ApiException.conflict("sale_fully_refunded", "everything on this sale has been returned");
         }
+        // Serialize return credit releases with ordinary repayments and write-offs.
+        Receivable receivable = receivableRows.lockForSale(sale.getId()).orElse(null);
+        var moneyBefore = paymentStates.forSale(sale.getId());
         Organization organization = organization();
         int minor = Money.minorDigits(organization.getCurrencyCode());
         Location store = shiftService.requireStore(command.locationId());
@@ -191,21 +205,43 @@ public class ReturnService {
             refund = refund.add(lineRefund);
             tax = tax.add(lineTax);
         }
+        boolean everything = sold.values().stream().allMatch(l -> runningReturned
+                .getOrDefault(l.getId(), BigDecimal.ZERO).compareTo(l.getQuantity()) >= 0);
+        BigDecimal alreadyReturned = returns.findAllByOriginalSaleIdOrderByReturnedAtAscIdAsc(sale.getId())
+                .stream().map(SaleReturn::getRefundAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal remainingValue = sale.getTotal().subtract(alreadyReturned);
+        BigDecimal lineRefundTotal = refund;
+        // The last return includes the header's rounding; never refund more than the receipt total.
+        refund = everything ? remainingValue : refund.min(remainingValue);
+        if (refund.signum() < 0) throw ApiException.conflict("refund_exceeds_sale", "earlier returns exceed this sale's total");
+        BigDecimal roundingRefund = refund.subtract(lineRefundTotal);
+        BigDecimal credit = command.creditRefundAmount() != null ? command.creditRefundAmount()
+                : command.refundMethod() == PaymentMethod.CREDIT ? refund : BigDecimal.ZERO;
+        if (credit.signum() < 0 || credit.stripTrailingZeros().scale() > minor)
+            throw ApiException.badRequest("invalid_amount", "creditRefundAmount must be non-negative in the currency's minor unit");
+        if (credit.compareTo(refund) > 0 || (command.refundMethod() == PaymentMethod.CREDIT && credit.compareTo(refund) != 0))
+            throw ApiException.badRequest("invalid_credit_refund", "the credit release must fit the refund");
+        if (credit.signum() > 0 && (receivable == null || credit.compareTo(receivable.getOutstandingAmount()) > 0))
+            throw ApiException.conflict("refund_exceeds_outstanding", "the credit release exceeds the unpaid balance");
+        if (refund.subtract(credit).compareTo(moneyBefore.netReceivedAmount().max(BigDecimal.ZERO)) > 0)
+            throw ApiException.conflict("refund_exceeds_received", "only money actually received can be refunded; release unpaid credit instead");
         ledger.post(entries);
 
         SaleReturn saleReturn = returns.saveAndFlush(new SaleReturn(returnId, sale.getId(), store.getId(),
                 command.cashierShiftId(), number, command.refundMethod(), refund, tax, command.referenceNo(),
-                command.reason(), returnedAt, key));
+                command.reason(), returnedAt, key, credit, roundingRefund));
         List<SaleReturnLine> saved = new ArrayList<>(lines.size());
         for (SaleReturnLine line : lines) {
             saved.add(returnLines.save(line));
         }
-        if (command.refundMethod() == PaymentMethod.CREDIT && refund.signum() > 0) {
-            settleAgainstReceivable(sale, refund, store.getId(), number, returnedAt);
+        if (credit.signum() > 0) {
+            settleAgainstReceivable(sale, credit, store.getId(), number, returnedAt);
         }
-        boolean everything = sold.values().stream().allMatch(l -> runningReturned
-                .getOrDefault(l.getId(), BigDecimal.ZERO).compareTo(l.getQuantity()) >= 0);
         sale.markRefunded(everything);
+        if (everything && sale.getProgress() == SaleProgress.OPEN) {
+            progressEvents.save(new SaleProgressEvent(sale.getId(), SaleProgress.OPEN, SaleProgress.CLOSED, "All goods returned"));
+            sale.setProgress(SaleProgress.CLOSED);
+        }
         return new ReturnResult(new ReturnDetails(saleReturn, saved), false);
     }
 
