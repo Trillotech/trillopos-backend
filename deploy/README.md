@@ -107,8 +107,8 @@ On the server:
 
 ```bash
 mkdir -p ~/trillopos && cd ~/trillopos
-git clone --branch main https://github.com/swanhtetaung01/trillopos-backend.git
-git clone --branch main https://github.com/swanhtetaung01/trillopos-web.git
+git clone --branch main https://github.com/Trillotech/trillopos-backend.git
+git clone --branch main https://github.com/Trillotech/trillopos-web.git
 bash trillopos-backend/deploy/setup-server.sh
 exit
 ```
@@ -238,7 +238,7 @@ message if the site goes down.
   in it, but a business usually keeps its code private. To make them private: GitHub → each repo →
   Settings → Danger Zone → *Change visibility*. The server then needs read access to pull: create
   a fine-grained personal access token with *Contents: read-only* on the two repos, and run
-  `git -C ~/trillopos/trillopos-backend remote set-url origin https://<token>@github.com/swanhtetaung01/trillopos-backend.git`
-  (and the same for `trillopos-web`).
+  `git -C ~/trillopos/trillopos-backend remote set-url origin https://<token>@github.com/Trillotech/trillopos-backend.git`
+  (and the same for `trillopos-web`). The token must be allowed to read the Trillotech organization, not only the old personal account.
 - A real domain later: point it at the Elastic IP (an A record), change `TRILLOPOS_DOMAIN`, and run
   `./deploy.sh`. The certificate follows automatically.
